@@ -63,15 +63,15 @@
 </style>
 </head>
 <body>
-<header><h1>Skor kecantikan · Beauty scores</h1><a href="/">← Pilih</a></header>
+<header><h1>Beauty scores</h1><a href="/">← Back to picking</a></header>
 <div id="msg">Loading…</div>
 <div class="switch" id="switch" hidden>
-  <label for="who">Selera · Taste of</label>
-  <select id="who"><option value="">Semua rater · All raters (team model)</option></select>
+  <label for="who">Taste of</label>
+  <select id="who"><option value="">All raters (team model)</option></select>
 </div>
 <section id="model" class="card" hidden></section>
 <section id="map" class="card" hidden>
-  <h2>Peta wilayah · Territory map</h2>
+  <h2>Territory map</h2>
   <div id="mapsvg"></div>
   <div id="tip" class="meta">Tap a face. Drag to move, pinch or scroll to zoom, double-tap to zoom in.</div>
   <div class="legend" id="legend"></div>
@@ -80,7 +80,7 @@
     approximate; the scores below are exact.</p>
 </section>
 <section id="agree" class="card" hidden></section>
-<h2 id="boardTitle" hidden>Peringkat · Leaderboard</h2>
+<h2 id="boardTitle" hidden>Leaderboard</h2>
 <div class="chips" id="chips"></div>
 <ol id="faces"></ol>
 <script>
@@ -89,7 +89,7 @@
   try { token = new URLSearchParams(location.search).get("t") || localStorage.getItem("rater");
     if (token) localStorage.setItem("rater", token); } catch (_) {}
   const $ = (id) => document.getElementById(id);
-  if (!token) { $("msg").innerHTML = 'Masuk dulu · <a href="/">Sign in on the pick page first</a>.'; return; }
+  if (!token) { $("msg").innerHTML = '<a href="/">Sign in on the picking page first</a>.'; return; }
   const api = (path, opts = {}) => fetch(path, { ...opts, headers: { "x-rater-token": token } });
   const pct = (x) => (x == null ? "–" : Math.round(x * 100) + "%");
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -316,14 +316,14 @@
     const names = a.raters.map((r) => r.name);
     const opts = $("who");
     const keep = state.rater;
-    opts.innerHTML = '<option value="">Semua rater · All raters (team model)</option>' +
+    opts.innerHTML = '<option value="">All raters (team model)</option>' +
       names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
     opts.value = keep;
     $("switch").hidden = false;
     const cell = (x, n) => (x == null ? "–" : `${pct(x)}<span class="meta"> /${n}</span>`);
     const cross = new Map(a.cross.map((c) => [`${c.model}|${c.picks_of}`, c]));
     $("agree").hidden = false;
-    $("agree").innerHTML = `<h2>Kesepakatan rater · Rater agreement</h2>
+    $("agree").innerHTML = `<h2>Rater agreement</h2>
       <div class="scroll"><table>
         <tr><th>Rater</th><th>Picks</th><th>Team model agrees</th>${names.length > 1 ? names.map((n) => `<th>${esc(n)}'s taste predicts</th>`).join("") : ""}</tr>
         ${a.raters.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.picks}</td><td>${cell(r.team, r.picks)}</td>
@@ -344,7 +344,7 @@
   async function load() {
     const q = state.rater ? `?rater=${encodeURIComponent(state.rater)}` : "";
     const [r, mr, ar] = await Promise.all([api("/api/results" + q), api("/api/map" + q), api("/api/raters")]);
-    if (r.status === 401) { $("msg").innerHTML = 'Masuk dulu · <a href="/">Sign in on the pick page first</a>.'; return; }
+    if (r.status === 401) { $("msg").innerHTML = '<a href="/">Sign in on the picking page first</a>.'; return; }
     render(await r.json());
     state.map = mr.ok ? await mr.json() : null;
     $("map").hidden = true;

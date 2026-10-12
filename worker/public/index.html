@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#202020">
 <link rel="manifest" href="/manifest.webmanifest">
-<title>Sinemart Pick</title>
+<title>Sinemart · Pilih</title>
 <style>
   :root { --bg: #202020; --fg: #f2f2f2; --muted: #9a9a9a; --accent: #f5c242; }
   * { box-sizing: border-box; }
@@ -46,26 +46,26 @@
 </head>
 <body>
 <header>
-  <h1>Siapa lebih layar? <span>Who's more screen-worthy?</span></h1>
+  <h1>Mana yang lebih menarik?</h1>
   <a id="count" href="/results.html"></a>
 </header>
 <div id="who" class="hide"></div>
 <form id="login" class="hide">
-  <p>Ketik nama Anda. Setiap pilihan dicatat atas nama ini.<br>Type your name. Every pick is saved under it.</p>
-  <input id="name" autocomplete="name" placeholder="Nama / Name" maxlength="40" required>
-  <input id="code" placeholder="Kode tim / Team code" autocomplete="off">
-  <button type="submit">Mulai · Start</button>
+  <p>Tulis nama kamu dulu. Semua pilihanmu dicatat dengan nama ini.</p>
+  <input id="name" autocomplete="name" placeholder="Nama" maxlength="40" required>
+  <input id="code" placeholder="Kode tim" autocomplete="off">
+  <button type="submit">Mulai</button>
   <div id="loginErr"></div>
 </form>
 <div id="msg" class="hide"></div>
 <main id="pair" class="hide">
-  <button class="face" id="left" aria-label="Pick left"><img alt=""><kbd>←</kbd>
-    <span class="more hide" role="button" aria-label="Next photo of this person"></span><span class="dots"></span></button>
-  <button class="face" id="right" aria-label="Pick right"><img alt=""><kbd>→</kbd>
-    <span class="more hide" role="button" aria-label="Next photo of this person"></span><span class="dots"></span></button>
+  <button class="face" id="left" aria-label="Pilih kiri"><img alt=""><kbd>←</kbd>
+    <span class="more hide" role="button" aria-label="Foto berikutnya"></span><span class="dots"></span></button>
+  <button class="face" id="right" aria-label="Pilih kanan"><img alt=""><kbd>→</kbd>
+    <span class="more hide" role="button" aria-label="Foto berikutnya"></span><span class="dots"></span></button>
 </main>
 <footer id="bar" class="hide">
-  <button id="skip">Tidak bisa pilih / skip</button>
+  <button id="skip">Lewati</button>
 </footer>
 <script>
 (() => {
@@ -94,7 +94,7 @@
     const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: $("name").value, code: $("code").value.trim() }) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) return signIn(r.status === 403 ? "Kode tim salah. Wrong team code." : d.error || "Coba lagi. Try again.");
+    if (!r.ok) return signIn(r.status === 403 ? "Kode tim salah." : r.status === 400 ? "Tulis nama kamu (minimal 2 huruf)." : "Gagal masuk, coba lagi.");
     store("team", $("code").value.trim());
     store("rater", (token = d.token));
     $("login").classList.add("hide");
@@ -116,7 +116,7 @@
     b.querySelector("img").src = v === 0 ? imgUrl(id) : imgUrl(id, v - 1);
     const more = b.querySelector(".more");
     more.classList.toggle("hide", total < 2);
-    more.textContent = `${v === 0 ? "wajah · face" : kinds[v - 1].replace("fullbody", "full body ")} · ${v + 1}/${total} ›`;
+    more.textContent = `${v === 0 ? "Wajah" : kinds[v - 1] === "closeup" ? "Close-up" : kinds[v - 1].replace("fullbody", "Seluruh badan ")} · ${v + 1}/${total} ›`;
     b.querySelector(".dots").innerHTML = total < 2 ? "" : Array.from({ length: total }, (_, i) => `<i class="${i === v ? "on" : ""}"></i>`).join("");
   }
   function flip(side, step) {
@@ -142,7 +142,7 @@
   async function fetchPair() {
     const r = await api("/api/pair");
     if (r.status === 401) { store("rater", null); token = null; signIn(); throw new Error(""); }
-    if (!r.ok) throw new Error("Belum ada foto. No applicants loaded yet.");
+    if (!r.ok) throw new Error("Belum ada foto peserta.");
     const p = await r.json();
     // Preload both images before the pair is shown.
     await Promise.all([p.left_id, p.right_id].map((id) => new Promise((ok) => {
@@ -157,7 +157,7 @@
     showView("left"); showView("right");
     document.querySelectorAll(".face").forEach((b) => b.classList.remove("chosen"));
     $("msg").classList.add("hide"); $("pair").classList.remove("hide"); $("bar").classList.remove("hide");
-    $("count").textContent = `${picks} pilihan · skor →`;
+    $("count").textContent = `${picks} pilihan · lihat skor →`;
     shownAt = performance.now();
     next = fetchPair().catch(() => null);
   }
@@ -177,7 +177,7 @@
       render(p);
     } catch (e) {
       if (!token) return;
-      show(e.message || "Koneksi gagal, coba lagi. Connection failed, try again.");
+      show(e.message || "Koneksi terputus. Mencoba lagi…");
       setTimeout(start, 3000);
     } finally { busy = false; }
   }
@@ -191,7 +191,7 @@
       $("who").innerHTML = "";
       $("who").append(`Halo, ${me.name}`);
       const out = document.createElement("button");
-      out.textContent = "bukan saya · not me";
+      out.textContent = "Bukan kamu?";
       out.onclick = () => { store("rater", null); token = null; current = null; signIn(); };
       $("who").append(out);
       $("who").classList.remove("hide");
