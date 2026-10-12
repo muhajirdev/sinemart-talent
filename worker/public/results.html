@@ -33,12 +33,39 @@
   .bar i { display: block; height: 100%; background: var(--good); }
   .meta { color: var(--muted); font-size: 13px; }
   #msg { color: var(--muted); padding: 30px 0; text-align: center; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  .h1c { --c: #3987e5; } .h2c { --c: #d95926; } .h3c { --c: #199e70; } .h4c { --c: #c98500; }
+  .h5c { --c: #d55181; } .h6c { --c: #008300; } .h7c { --c: #9085e9; } .h8c { --c: #e66767; }
+  #map svg { width: 100%; height: auto; display: block; border-radius: 8px; background: #1a1a19; touch-action: manipulation; }
+  #map .face { cursor: pointer; }
+  #map .face circle.ring { fill: none; stroke: var(--c); stroke-width: 0.9; }
+  #map .face.sel circle.ring { stroke: #fff; stroke-width: 1.2; }
+  #map .peak path { fill: var(--c); stroke: #1a1a19; stroke-width: 0.4; }
+  #map text { font: 600 3px system-ui, sans-serif; fill: #f2f2f2; paint-order: stroke; stroke: #1a1a19; stroke-width: 0.6; }
+  #tip { min-height: 20px; font-size: 14px; margin: 8px 0 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 16px; font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--c); margin-right: 6px; vertical-align: -1px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .chips button { background: var(--card); color: var(--fg); border: 1px solid #444; font-weight: 500; padding: 6px 14px; }
+  .chips button[aria-pressed="true"] { background: var(--fg); color: #111; border-color: var(--fg); }
+  .tag { display: inline-block; padding: 0 7px; border-radius: 999px; border: 1px solid var(--c); color: var(--fg); font-size: 12px; }
 </style>
 </head>
 <body>
 <header><h1>Skor kecantikan · Beauty scores</h1><a href="/">← Pilih</a></header>
 <div id="msg">Loading…</div>
 <section id="model" class="card" hidden></section>
+<section id="map" class="card" hidden>
+  <h2>Peta wilayah · Territory map</h2>
+  <div id="mapsvg"></div>
+  <div id="tip" class="meta">Tap a face.</div>
+  <div class="legend" id="legend"></div>
+  <p class="note">Brighter ground = higher on a hill. ▲ = a look's peak (its ideal face). Faces are ringed in
+    the colour of the hill they stand on. This is a flat slice of a higher-dimensional map, so distances are
+    approximate; the scores below are exact.</p>
+</section>
+<h2 id="boardTitle" hidden>Peringkat · Leaderboard</h2>
+<div class="chips" id="chips"></div>
 <ol id="faces"></ol>
 <script>
 (() => {
@@ -88,25 +115,83 @@
       if (r.status !== "trained") alert(r.status);
       load();
     };
-    $("faces").innerHTML = d.faces.map((f, i) => {
-      const beat = f.score == null ? null : 1 / (1 + Math.exp(-(f.score - mean)));
-      return `<li>
+    state.d = d; state.mean = mean;
+    renderBoard();
+    $("msg").hidden = true;
+  }
+
+  const state = { d: null, mean: 0, filter: "all", map: null, sel: null };
+  const hc = (k) => `h${(k % 8) + 1}c`; // fixed palette order; labels carry identity past 8
+  const beatOf = (f) => (f.score == null ? null : 1 / (1 + Math.exp(-(f.score - state.mean))));
+
+  function renderBoard() {
+    const d = state.d;
+    const hills = [...new Set(d.faces.map((f) => f.look).filter((x) => x != null))].sort((a, b) => a - b);
+    $("boardTitle").hidden = false;
+    $("chips").innerHTML = [["all", "All"], ...hills.map((k) => [String(k), `Hill ${k + 1}`])]
+      .map(([v, label]) => `<button data-f="${v}" aria-pressed="${state.filter === v}">${label}</button>`).join("");
+    $("chips").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.filter = b.dataset.f; renderBoard(); }));
+    const list = d.faces.filter((f) => state.filter === "all" || String(f.look) === state.filter);
+    $("faces").innerHTML = list.map((f, i) => {
+      const beat = beatOf(f);
+      return `<li id="f${f.id}">
         <div class="rank">${f.score == null ? "–" : i + 1}</div>
         <img src="/img/${f.id}?t=${encodeURIComponent(token)}" alt="Applicant ${f.id}" loading="lazy">
         <div>
           <div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
           <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>
-          <div class="meta">#${f.id} · hill ${f.look ?? "–"} · won ${f.wins}/${f.games}
-            ${f.score == null ? "" : ` · ±${(f.score_std ?? 0).toFixed(2)}`}</div>
+          <div class="meta">#${f.id} · ${f.look == null ? "no hill" : `<span class="tag ${hc(f.look)}">Hill ${f.look + 1}</span>`}
+            · won ${f.wins}/${f.games}${f.score == null ? "" : ` · ±${(f.score_std ?? 0).toFixed(2)}`}</div>
         </div></li>`;
     }).join("");
-    $("msg").hidden = true;
+  }
+
+  function renderMap() {
+    const m = state.map, d = state.d;
+    if (!m || !m.grid || !m.faces.length) return;
+    $("map").hidden = false;
+    const g = m.grid, W = 100, H = 100;
+    const sx = (x) => ((x - g.xmin) / (g.xmax - g.xmin)) * W;
+    const sy = (y) => ((g.ymax - y) / (g.ymax - g.ymin)) * H;
+    // Height field: one neutral ramp (brighter = higher), banded like contours.
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = g.n;
+    const ctx = cv.getContext("2d"), img = ctx.createImageData(g.n, g.n);
+    const lo = Math.min(...g.h), hi = Math.max(...g.h);
+    g.h.forEach((v, i) => {
+      const t = Math.floor(((v - lo) / (hi - lo || 1)) * 7) / 7; // 8 bands
+      const c = Math.round(26 + t * 90);
+      img.data.set([c, c, c - 2, 255], i * 4);
+    });
+    ctx.putImageData(img, 0, 0);
+    const info = new Map(d.faces.map((f, i) => [f.id, { ...f, rank: f.score == null ? null : i + 1 }]));
+    const peaks = m.peaks.map((p) => `<g class="peak ${hc(p.k)}" transform="translate(${sx(p.x)},${sy(p.y)})">
+        <path d="M0,-3.2 L2.8,1.8 L-2.8,1.8 Z"/><text x="3.4" y="1.2">H${p.k + 1}</text></g>`).join("");
+    const faces = m.faces.map((f) => `<g class="face ${hc(f.hill)}" data-id="${f.id}" transform="translate(${sx(f.x)},${sy(f.y)})">
+        <clipPath id="c${f.id}"><circle r="4.6"/></clipPath>
+        <circle r="7" fill="transparent"/>
+        <image href="/img/${f.id}?t=${encodeURIComponent(token)}" x="-4.6" y="-4.6" width="9.2" height="9.2" clip-path="url(#c${f.id})"/>
+        <circle class="ring" r="5"/></g>`).join("");
+    $("mapsvg").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Map of faces and look peaks">
+      <image href="${cv.toDataURL()}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>
+      ${faces}${peaks}</svg>`;
+    $("mapsvg").querySelectorAll(".face").forEach((el) => (el.onclick = () => {
+      const f = info.get(Number(el.dataset.id));
+      $("mapsvg").querySelectorAll(".face").forEach((x) => x.classList.toggle("sel", x === el));
+      const beat = beatOf(f);
+      $("tip").innerHTML = `<b>#${f.id}</b> · Hill ${(f.look ?? 0) + 1} · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${f.rank}`} · won ${f.wins}/${f.games}`;
+    }));
+    const counts = {};
+    m.faces.forEach((f) => (counts[f.hill] = (counts[f.hill] || 0) + 1));
+    $("legend").innerHTML = m.peaks.map((p) => `<span class="${hc(p.k)}"><i></i>Hill ${p.k + 1} · ${counts[p.k] || 0} faces</span>`).join("");
   }
 
   async function load() {
-    const r = await api("/api/results");
+    const [r, mr] = await Promise.all([api("/api/results"), api("/api/map")]);
     if (!r.ok) { $("msg").textContent = "Unknown rater link."; return; }
     render(await r.json());
+    state.map = mr.ok ? await mr.json() : null;
+    renderMap();
   }
   load();
 })();

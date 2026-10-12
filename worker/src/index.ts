@@ -2,6 +2,7 @@
 // retrains the hills model as picks come in, and reports scores.
 // Static UI lives in ../public; everything under /api and /img lands here.
 
+import { territory } from "./map";
 import { RETRAIN_EVERY, retrain } from "./retrain";
 
 export interface Env {
@@ -147,6 +148,7 @@ export default {
     }
     if (url.pathname === "/api/pick" && req.method === "POST") return recordPick(req, env, who, ctx);
     if (url.pathname === "/api/results" && req.method === "GET") return results(env);
+    if (url.pathname === "/api/map" && req.method === "GET") return json(await territory(env));
     if (url.pathname === "/api/retrain" && req.method === "POST") return json(await retrain(env));
     if (url.pathname === "/api/reset" && req.method === "POST") {
       // Start testing fresh: forget every pick and everything learned from them.
