@@ -9,7 +9,7 @@ not_found_handling = "none"
 [[d1_databases]]
 binding = "DB"
 database_name = "sinemart-talent"
-database_id = "REPLACE_WITH_D1_ID"   # wrangler d1 create sinemart-talent
+database_id = "aaf71364-974f-4ce8-a59a-c4122b30d26c"
 
 [[r2_buckets]]
 binding = "IMAGES"
