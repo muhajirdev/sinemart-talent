@@ -1,0 +1,19 @@
+name = "sinemart-talent"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+
+[assets]
+directory = "public"
+not_found_handling = "none"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sinemart-talent"
+database_id = "REPLACE_WITH_D1_ID"   # wrangler d1 create sinemart-talent
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "sinemart-talent"
+
+# ADMIN_TOKEN (guards /api/export.csv) is a secret:
+#   wrangler secret put ADMIN_TOKEN

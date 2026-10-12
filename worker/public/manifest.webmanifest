@@ -1,0 +1,8 @@
+{
+  "name": "Sinemart Pick",
+  "short_name": "Pick",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#202020",
+  "theme_color": "#202020"
+}

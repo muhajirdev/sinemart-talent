@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#202020">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>Sinemart Pick</title>
+<style>
+  :root { --bg: #202020; --fg: #f2f2f2; --muted: #9a9a9a; --accent: #f5c242; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+  header { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 0 8px; }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  header span { color: var(--muted); font-size: 14px; }
+  #pair { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 0; }
+  @media (max-aspect-ratio: 3/4) { #pair { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
+  button.face { all: unset; cursor: pointer; position: relative; border-radius: 12px; overflow: hidden;
+    background: #808080; display: flex; align-items: center; justify-content: center; min-height: 0; }
+  button.face img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  button.face:focus-visible { outline: 3px solid var(--accent); }
+  button.face.chosen { outline: 4px solid var(--accent); }
+  button.face kbd { position: absolute; left: 8px; bottom: 8px; background: #0008; color: #fff;
+    padding: 2px 8px; border-radius: 6px; font: 13px system-ui; }
+  footer { display: flex; gap: 12px; justify-content: center; padding: 12px 0; }
+  footer button { background: #333; color: var(--fg); border: 0; border-radius: 999px; padding: 10px 20px; font-size: 15px; }
+  #msg { text-align: center; color: var(--muted); padding: 40px 0; }
+  .hide { display: none !important; }
+  @media (hover: none) { button.face kbd { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Siapa lebih layar? <span>Who's more screen-worthy?</span></h1>
+  <span id="count"></span>
+</header>
+<div id="msg" class="hide"></div>
+<main id="pair" class="hide">
+  <button class="face" id="left" aria-label="Pick left"><img alt=""><kbd>←</kbd></button>
+  <button class="face" id="right" aria-label="Pick right"><img alt=""><kbd>→</kbd></button>
+</main>
+<footer id="bar" class="hide">
+  <button id="skip">Tidak bisa pilih / skip</button>
+</footer>
+<script>
+(() => {
+  const qs = new URLSearchParams(location.search);
+  let token = qs.get("t");
+  try {
+    if (token) { localStorage.setItem("rater", token); history.replaceState(null, "", "/"); }
+    else token = localStorage.getItem("rater");
+  } catch (_) {}
+  const $ = (id) => document.getElementById(id);
+  const show = (text) => { $("msg").textContent = text; $("msg").classList.remove("hide");
+    $("pair").classList.add("hide"); $("bar").classList.add("hide"); };
+  if (!token) return show("Buka link rater Anda dulu. Open your personal rater link first.");
+
+  const api = (path, opts = {}) =>
+    fetch(path, { ...opts, headers: { "x-rater-token": token, "content-type": "application/json" } });
+  const imgUrl = (id) => `/img/${id}?t=${encodeURIComponent(token)}`;
+
+  let current = null, next = null, shownAt = 0, busy = false, picks = 0;
+
+  async function fetchPair() {
+    const r = await api("/api/pair");
+    if (r.status === 401) throw new Error("Link rater tidak dikenal. Unknown rater link.");
+    if (!r.ok) throw new Error("Belum ada foto. No applicants loaded yet.");
+    const p = await r.json();
+    // Preload both images before the pair is shown.
+    await Promise.all([p.left_id, p.right_id].map((id) => new Promise((ok) => {
+      const im = new Image(); im.onload = im.onerror = ok; im.src = imgUrl(id);
+    })));
+    return p;
+  }
+
+  function render(p) {
+    current = p;
+    $("left").querySelector("img").src = imgUrl(p.left_id);
+    $("right").querySelector("img").src = imgUrl(p.right_id);
+    document.querySelectorAll(".face").forEach((b) => b.classList.remove("chosen"));
+    $("msg").classList.add("hide"); $("pair").classList.remove("hide"); $("bar").classList.remove("hide");
+    $("count").textContent = `${picks} pilihan`;
+    shownAt = performance.now();
+    next = fetchPair().catch(() => null);
+  }
+
+  async function pick(side) {
+    if (busy || !current) return;
+    busy = true;
+    const winner = side === "left" ? current.left_id : side === "right" ? current.right_id : null;
+    if (side !== "skip") $(side).classList.add("chosen");
+    const body = { queue_id: current.queue_id, left_id: current.left_id, right_id: current.right_id,
+      winner_id: winner, ms: performance.now() - shownAt };
+    try {
+      const r = await api("/api/pick", { method: "POST", body: JSON.stringify(body) });
+      if (!r.ok) throw new Error();
+      if (winner !== null) picks++;
+      const p = (await next) || (await fetchPair());
+      render(p);
+    } catch (e) {
+      show(e.message || "Koneksi gagal, coba lagi. Connection failed, try again.");
+      setTimeout(start, 3000);
+    } finally { busy = false; }
+  }
+
+  async function start() {
+    try {
+      const me = await (await api("/api/me")).json();
+      picks = me.picks || 0;
+      render(await fetchPair());
+    } catch (e) { show(e.message); }
+  }
+
+  $("left").onclick = () => pick("left");
+  $("right").onclick = () => pick("right");
+  $("skip").onclick = () => pick("skip");
+  addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "1") pick("left");
+    else if (e.key === "ArrowRight" || e.key === "2") pick("right");
+    else if (e.key === " " || e.key === "ArrowDown") { e.preventDefault(); pick("skip"); }
+  });
+  start();
+})();
+</script>
+</body>
+</html>

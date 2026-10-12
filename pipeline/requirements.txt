@@ -1,0 +1,10 @@
+numpy>=2.0
+opencv-python-headless>=4.10
+pillow>=10
+# embedding
+torch>=2.4
+transformers>=4.56
+# grey background (optional; needs libEGL on headless Linux)
+mediapipe>=0.10.14
+# tests
+pytest>=8
