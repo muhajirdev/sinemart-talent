@@ -177,7 +177,7 @@
   const certainty = (f) => {
     if (f.score_std == null || f.score == null) return "";
     const level = f.score_std < 0.25 ? "high" : f.score_std < 0.6 ? "medium" : "low";
-    return ` · <span title="Score spread across retrains: ±${f.score_std.toFixed(2)}. Lower = more settled.">Certainty: ${level}</span>`;
+    return ` · <span title="Score spread across retrains: ±${f.score_std.toFixed(2)}. Lower = more settled.">Certainty: ${level} (±${f.score_std.toFixed(2)})</span>`;
   };
   const beatOf = (f) => (f.score == null ? null : 1 / (1 + Math.exp(-(f.score - state.mean))));
 
