@@ -59,12 +59,16 @@
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #3a3a3a; }
   th { color: var(--muted); font-weight: 500; font-size: 13px; }
   .scroll { overflow-x: auto; }
+  .gfix { all: unset; cursor: pointer; color: var(--accent); font-size: 12px; margin-left: 6px; }
   .tag { display: inline-block; padding: 0 7px; border-radius: 999px; border: 1px solid var(--c); color: var(--fg); font-size: 12px; }
 </style>
 </head>
 <body>
 <header><h1>Beauty scores</h1><a href="/">← Back to picking</a></header>
 <div id="msg">Loading…</div>
+<div class="chips" id="gsw" hidden>
+  <button data-g="f" aria-pressed="true">Cewek</button><button data-g="m" aria-pressed="false">Cowok</button>
+</div>
 <div class="switch" id="switch" hidden>
   <label for="who">Taste of</label>
   <select id="who"><option value="">All raters (team model)</option></select>
@@ -105,7 +109,7 @@
     if (d.rater) {
       $("model").innerHTML = `
         <div class="stats">
-          <div class="stat"><b>${trained ? "Hills" : "Not trained"}</b><span>${esc(d.rater)}'s own model · ${m.hills || 0} hills</span></div>
+          <div class="stat"><b>${trained ? "Hills" : "Not trained"}</b><span>${esc(d.rater)}'s own model · ${gname[state.gender] || ""}</span></div>
           <div class="stat"><b>${p.decided}</b><span>picks by ${esc(d.rater)} (${p.total - p.decided} skipped)</span></div>
         </div>
         <p class="note">${trained
@@ -118,7 +122,7 @@
     }
     $("model").innerHTML = `
       <div class="stats">
-        <div class="stat"><b>${trained ? "Hills" : "Not trained"}</b><span>active model · ${m.hills || 0} hills (looks)</span></div>
+        <div class="stat"><b>${trained ? "Hills" : "Not trained"}</b><span>active model · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} hills` : `${m.hills || 0} hills (looks)`}</span></div>
         <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.total - p.decided} skipped)</span></div>
         <div class="stat"><b>${pct(m.heldout_hills)}</b><span>hills: held-out agreement</span></div>
         <div class="stat"><b>${pct(m.heldout_line)}</b><span>straight arrow, same test</span></div>
@@ -150,15 +154,22 @@
     $("msg").hidden = true;
   }
 
-  const state = { d: null, mean: 0, filter: "all", map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 } };
-  const hc = (k) => `h${(k % 8) + 1}c`; // fixed palette order; labels carry identity past 8
+  const state = { d: null, mean: 0, filter: "all", map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 }, gender: "f", pg: [] };
+  // Hills are numbered and coloured within their group (cewek / cowok).
+  const local = (k) => {
+    const pg = state.pg || [];
+    return pg.length ? pg.slice(0, k).filter((g) => g === pg[k]).length : k;
+  };
+  const hc = (k) => `h${(local(k) % 8) + 1}c`; // fixed palette order; labels carry identity past 8
+  const hn = (k) => `Hill ${local(k) + 1}`;
+  const gname = { f: "Cewek", m: "Cowok" };
   const beatOf = (f) => (f.score == null ? null : 1 / (1 + Math.exp(-(f.score - state.mean))));
 
   function renderBoard() {
     const d = state.d;
     const hills = [...new Set(d.faces.map((f) => f.look).filter((x) => x != null))].sort((a, b) => a - b);
     $("boardTitle").hidden = false;
-    $("chips").innerHTML = [["all", "All"], ...hills.map((k) => [String(k), `Hill ${k + 1}`])]
+    $("chips").innerHTML = [["all", "All"], ...hills.map((k) => [String(k), hn(k)])]
       .map(([v, label]) => `<button data-f="${v}" aria-pressed="${state.filter === v}">${label}</button>`).join("");
     $("chips").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.filter = b.dataset.f; renderBoard(); }));
     const list = d.faces.filter((f) => state.filter === "all" || String(f.look) === state.filter);
@@ -171,10 +182,18 @@
         <div>
           <div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
           <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>
-          <div class="meta">#${f.id} · ${f.look == null ? "no hill" : `<span class="tag ${hc(f.look)}">Hill ${f.look + 1}</span>`}
+          <div class="meta">#${f.id} · ${f.look == null ? "no hill" : `<span class="tag ${hc(f.look)}">${hn(f.look)}</span>`}${f.gender ? ` · ${gname[f.gender]}${f.gender_src === "manual" ? " (fixed)" : ""}
+              <button class="gfix" data-id="${f.id}" data-g="${f.gender === "f" ? "m" : "f"}">move to ${gname[f.gender === "f" ? "m" : "f"]}</button>` : ""}
             · won ${f.wins}/${f.games}${f.n_photos > 1 ? ` · ${f.n_photos} photos` : ""}${f.score_std == null ? "" : ` · ±${f.score_std.toFixed(2)}`}</div>
         </div></li>`;
     }).join("");
+    $("faces").querySelectorAll(".gfix").forEach((b) => (b.onclick = async () => {
+      if (!confirm(`Move #${b.dataset.id} to ${gname[b.dataset.g]}? Their battles and hills switch group, and the model retrains.`)) return;
+      b.disabled = true;
+      await api("/api/gender", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: Number(b.dataset.id), gender: b.dataset.g }) });
+      setTimeout(load, 1500);
+    }));
     // Tap a thumbnail to flip through that person's photos (face crop first).
     $("faces").querySelectorAll("img[data-photos]").forEach((im) => (im.onclick = () => {
       const total = Number(im.dataset.photos) + 1;
@@ -206,7 +225,7 @@
     ctx.putImageData(img, 0, 0);
     const info = new Map(d.faces.map((f, i) => [f.id, { ...f, rank: f.score == null ? null : i + 1 }]));
     const peaks = m.peaks.map((p) => `<g class="peak mark ${hc(p.k)}" data-x="${sx(p.x)}" data-y="${sy(p.y)}">
-        <path d="M0,-3.2 L2.8,1.8 L-2.8,1.8 Z"/><text x="3.4" y="1.2">H${p.k + 1}</text></g>`).join("");
+        <path d="M0,-3.2 L2.8,1.8 L-2.8,1.8 Z"/><text x="3.4" y="1.2">H${local(p.k) + 1}</text></g>`).join("");
     const faces = m.faces.map((f) => `<g class="face mark ${hc(f.hill)}" data-id="${f.id}" data-x="${sx(f.x)}" data-y="${sy(f.y)}">
         <clipPath id="c${f.id}"><circle r="4.6"/></clipPath>
         <circle r="7" fill="transparent"/>
@@ -223,11 +242,11 @@
       const f = info.get(Number(el.dataset.id));
       $("mapsvg").querySelectorAll(".face").forEach((x) => x.classList.toggle("sel", x === el));
       const beat = beatOf(f);
-      $("tip").innerHTML = `<b>#${f.id}</b> · Hill ${(f.look ?? 0) + 1} · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${f.rank}`} · won ${f.wins}/${f.games}`;
+      $("tip").innerHTML = `<b>#${f.id}</b> · ${f.look == null ? "no hill" : hn(f.look)} · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${f.rank}`} · won ${f.wins}/${f.games}`;
     }));
     const counts = {};
     m.faces.forEach((f) => (counts[f.hill] = (counts[f.hill] || 0) + 1));
-    $("legend").innerHTML = m.peaks.map((p) => `<span class="${hc(p.k)}"><i></i>Hill ${p.k + 1} · ${counts[p.k] || 0} faces</span>`).join("");
+    $("legend").innerHTML = m.peaks.map((p) => `<span class="${hc(p.k)}"><i></i>${hn(p.k)} · ${counts[p.k] || 0} faces</span>`).join("");
   }
 
   // Pan and zoom by moving the viewBox. Faces and peaks keep their size on
@@ -343,14 +362,26 @@
 
   async function load() {
     const q = state.rater ? `?rater=${encodeURIComponent(state.rater)}` : "";
-    const [r, mr, ar] = await Promise.all([api("/api/results" + q), api("/api/map" + q), api("/api/raters")]);
+    const g = `${q ? "&" : "?"}gender=${state.gender}`;
+    const [r, mr, ar] = await Promise.all([api("/api/results" + q), api("/api/map" + q + g), api("/api/raters")]);
     if (r.status === 401) { $("msg").innerHTML = '<a href="/">Sign in on the picking page first</a>.'; return; }
-    render(await r.json());
+    const data = await r.json();
+    state.pg = data.model?.peak_gender || [];
+    // One group at a time: scores only compare within cewek or within cowok.
+    const grouped = data.faces.some((f) => f.gender);
+    $("gsw").hidden = !grouped;
+    if (grouped) data.faces = data.faces.filter((f) => f.gender === state.gender);
+    render(data);
     state.map = mr.ok ? await mr.json() : null;
     $("map").hidden = true;
     renderMap();
     if (ar.ok) renderAgree(await ar.json());
   }
+  $("gsw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
+    state.gender = b.dataset.g; state.filter = "all"; Object.assign(state.view, { x: 0, y: 0, w: 100 });
+    $("gsw").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    load();
+  }));
   $("who").onchange = () => { state.rater = $("who").value; state.filter = "all"; load(); };
   load();
 })();

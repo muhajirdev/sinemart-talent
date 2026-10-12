@@ -238,8 +238,14 @@ def main(argv: list[str] | None = None) -> None:
         w.writeheader()
         for aid, photos in sorted(people.items()):
             any_ok = False
+            used: set[str] = set()
             for row in photos:
                 name = f"{aid}-{row.kind}.jpg"
+                for n in range(2, 100):  # several "other" photos
+                    if name not in used:
+                        break
+                    name = f"{aid}-{row.kind}{n}.jpg"
+                used.add(name)
                 img = cv2.imread(str(Path(args.photo_root) / row.path))
                 if img is None:
                     crop, q = None, Quality(False, ["unreadable"])

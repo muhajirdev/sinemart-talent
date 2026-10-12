@@ -58,3 +58,13 @@ def test_embeddings_average_per_person():
     ids, emb, n = per_person([98, 98, 26], e)
     assert ids.tolist() == [26, 98] and n.tolist() == [1, 2]
     np.testing.assert_allclose(emb[1], [2 ** -0.5, 2 ** -0.5], rtol=1e-6)
+
+
+def test_same_photo_in_two_stage_folders_counts_once():
+    rows = build_manifest([
+        {"Path": "02- Video Unik (Pilihan)/16191 - E/16191-Foto-Closeup-e.jpg", "Size": 1},
+        {"Path": "01- Lolos SELEKSI TAHAP AWAL/16191 - E/16191-Foto-Closeup-e.jpg", "Size": 1},
+        {"Path": "01- Lolos SELEKSI TAHAP AWAL/5491 - R/5491-Foto-Closeup-r(1).jpg", "Size": 1},
+        {"Path": "01- Lolos SELEKSI TAHAP AWAL/5491 - R/5491-Foto-Closeup-r.jpg", "Size": 1},
+    ])
+    assert [(r.applicant_id, r.stage[:2]) for r in rows] == [(5491, "01"), (16191, "01")]

@@ -68,9 +68,14 @@ async function nextPair(env: Env, who: Rater) {
   if (row) return { queue_id: row.id, left_id: row.left_id, right_id: row.right_id };
 
   // Queue empty (cold start, or the trainer hasn't refilled it): random pair.
-  const { results } = await env.DB.prepare("SELECT id FROM applicants ORDER BY RANDOM() LIMIT 2").all<{ id: number }>();
-  if (results.length < 2) return null;
-  return { queue_id: null, left_id: results[0].id, right_id: results[1].id };
+  // Same group only: cewek vs cewek, cowok vs cowok.
+  const a = await env.DB.prepare("SELECT id, gender FROM applicants ORDER BY RANDOM() LIMIT 1").first<{ id: number; gender: string | null }>();
+  if (!a) return null;
+  const b = await env.DB.prepare(
+    "SELECT id FROM applicants WHERE id != ?1 AND gender IS ?2 ORDER BY RANDOM() LIMIT 1",
+  ).bind(a.id, a.gender).first<{ id: number }>();
+  if (!b) return null;
+  return { queue_id: null, left_id: a.id, right_id: b.id };
 }
 
 async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionContext) {
@@ -93,8 +98,8 @@ async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionCont
     const q = await env.DB.prepare("SELECT kind, left_id, right_id FROM pair_queue WHERE id = ?1")
       .bind(queue_id)
       .first<{ kind: string; left_id: number; right_id: number }>();
-    if (!q || q.left_id !== left_id || q.right_id !== right_id) return json({ error: "unknown pair" }, 400);
-    kind = q.kind;
+    if (q && (q.left_id !== left_id || q.right_id !== right_id)) return json({ error: "unknown pair" }, 400);
+    kind = q?.kind ?? "fallback"; // a retrain may have cleared the queue while this pair was on screen
   }
   const ms = Number.isFinite(body.ms) ? Math.round(body.ms!) : null;
   const stmts = [
@@ -128,7 +133,7 @@ async function results(env: Env, who: string | null) {
     "SELECT COUNT(*) AS decided, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters FROM picks WHERE winner_id IS NOT NULL",
   ).first<{ decided: number; total: number; raters: number }>();
   const { results: faces } = await env.DB.prepare(
-    `SELECT a.id, a.score, a.score_std, a.look,
+    `SELECT a.id, a.score, a.score_std, a.look, a.gender, a.gender_src,
        (SELECT COUNT(*) FROM picks p WHERE p.winner_id = a.id) AS wins,
        (SELECT COUNT(*) FROM picks p WHERE p.winner_id IS NOT NULL AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
        (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos
@@ -137,7 +142,10 @@ async function results(env: Env, who: string | null) {
   const init = model?.init ? JSON.parse(model.init as string) : null;
   if (model) delete model.init;
   return json({
-    model: { ...model, embedding: init?.model ?? null, hills: init?.peaks?.length ?? 0, retrain_every: RETRAIN_EVERY },
+    model: {
+      ...model, embedding: init?.model ?? null, hills: init?.peaks?.length ?? 0, peak_gender: init?.peak_gender ?? [],
+      retrain_every: RETRAIN_EVERY,
+    },
     picks,
     faces,
   });
@@ -165,9 +173,11 @@ async function raterResults(env: Env, who: string) {
   const faces = data.faces
     .map((f, i) => ({
       id: f.id,
-      score: hills ? hills.score(data.Z[i]) : null,
+      score: hills ? hills.score(data.Z[i], data.G[i]) : null,
       score_std: null,
-      look: hills ? hills.hill(data.Z[i]) : null,
+      look: hills ? hills.hill(data.Z[i], data.G[i]) : null,
+      gender: data.G[i],
+      gender_src: null,
       wins: wins.get(f.id) ?? 0,
       games: games.get(f.id) ?? 0,
       n_photos: photoCount.get(f.id) ?? 0,
@@ -177,12 +187,24 @@ async function raterResults(env: Env, who: string) {
     rater: who,
     model: {
       active: hills ? "hills" : null, n_picks: hills ? n : 0, trained_at: hills ? new Date().toISOString() : null,
-      hills: data.peaks.length, min_picks: MIN_PICKS, retrain_every: RETRAIN_EVERY,
+      hills: data.peaks.length, peak_gender: data.peakGroup, min_picks: MIN_PICKS, retrain_every: RETRAIN_EVERY,
     },
     picks: { decided: counts?.decided ?? 0, total: counts?.total ?? 0, raters: 1 },
     faces,
     params: hills ? JSON.stringify(hills) : null,
   });
+}
+
+// Fix a wrong cewek/cowok guess by hand. It moves the person to the other
+// group's hills and battles, so every model refits.
+async function setGender(req: Request, env: Env, ctx: ExecutionContext) {
+  const { id, gender } = (await req.json().catch(() => ({}))) as { id?: number; gender?: string };
+  if (!Number.isInteger(id) || (gender !== "f" && gender !== "m")) return json({ error: "id and gender f|m" }, 400);
+  const r = await env.DB.prepare("UPDATE applicants SET gender = ?1, gender_src = 'manual' WHERE id = ?2").bind(gender, id).run();
+  if (!r.meta.changes) return json({ error: "unknown applicant" }, 404);
+  await env.DB.prepare("DELETE FROM rater_models").run();
+  ctx.waitUntil(retrain(env));
+  return json({ ok: true });
 }
 
 async function exportPicks(env: Env) {
@@ -222,13 +244,15 @@ export default {
     if (url.pathname === "/api/pick" && req.method === "POST") return recordPick(req, env, who, ctx);
     if (url.pathname === "/api/results" && req.method === "GET") return results(env, only);
     if (url.pathname === "/api/map" && req.method === "GET") {
-      if (!only) return json(await territory(env));
+      const gender = url.searchParams.get("gender");
+      if (!only) return json(await territory(env, undefined, gender));
       const r = (await (await raterResults(env, only)).json()) as {
         params: string | null; faces: { id: number; score: number | null; look: number | null }[];
       };
       if (!r.faces) return json({ faces: [], peaks: [], grid: null });
-      return json(await territory(env, { params: r.params, faces: new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }])) }));
+      return json(await territory(env, { params: r.params, faces: new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }])) }, gender));
     }
+    if (url.pathname === "/api/gender" && req.method === "POST") return setGender(req, env, ctx);
     if (url.pathname === "/api/raters" && req.method === "GET") return json(await raterAgreement(env));
     if (url.pathname === "/api/retrain" && req.method === "POST") return json(await retrain(env));
     if (url.pathname === "/api/reset" && req.method === "POST") {

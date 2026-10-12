@@ -66,7 +66,17 @@ def build_manifest(listing: list[dict]) -> list[PhotoRow]:
         if row:
             rows.append(row)
     rows.sort(key=lambda r: (r.applicant_id, r.kind, r.path))
-    return rows
+    # The same photo often sits in two stage folders ("01- Lolos" and
+    # "02- Video Unik") or is re-uploaded as "...(1).jpg": keep one per kind.
+    seen: set[tuple[int, str]] = set()
+    out = []
+    for r in rows:
+        key = (r.applicant_id, r.kind)
+        if r.kind != "other" and key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
 
 
 def photo_rank(r: PhotoRow) -> tuple:

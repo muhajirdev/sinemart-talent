@@ -195,3 +195,22 @@ def test_half_the_uncertain_pairs_stay_on_one_hill():
     pairs, kinds = next_pairs(scores, std, 1000, top_k=50, seed=0, hill=hill)
     assert kinds.count("same_hill") == 350 and kinds.count("uncertain") == 350
     assert all(hill[a] == hill[b] for (a, b), k in zip(pairs, kinds) if k == "same_hill")
+
+
+def test_looks_never_mix_groups():
+    from sinemart.publish import taste_space
+
+    rng = np.random.default_rng(0)
+    emb = rng.normal(size=(60, 8))
+    groups = np.array(["f"] * 40 + ["m"] * 20, dtype=object)
+    z, look, peaks, peak_group = taste_space(emb, looks_k=4, rank=6, groups=groups)
+    assert peak_group == ["f"] * 4 + ["m"] * 4 and len(peaks) == 8
+    assert all(peak_group[k] == g for k, g in zip(look, groups))
+
+
+def test_zero_shot_gender_picks_closer_prompt():
+    from sinemart.gender import p_female
+
+    f, m = np.array([[1.0, 0.0]]), np.array([[0.0, 1.0]])
+    p = p_female(np.array([[0.9, 0.1], [0.1, 0.9]]), f, m)
+    assert p[0] > 0.99 and p[1] < 0.01

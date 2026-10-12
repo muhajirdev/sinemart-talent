@@ -44,11 +44,14 @@ function height(p: number[], q: number[][]) {
 export async function territory(
   env: Env,
   own?: { params: string | null; faces: Map<number, { score: number | null; hill: number | null }> },
+  gender: string | null = null, // only this group's faces and hills
   gridN = 64,
 ) {
   const model = await env.DB.prepare("SELECT init, params FROM model WHERE id = 1").first<{ init: string; params: string | null }>();
   if (!model?.init) return { faces: [], peaks: [], grid: null };
-  const peaks0: number[][] = JSON.parse(model.init).peaks;
+  const init = JSON.parse(model.init) as { peaks: number[][]; peak_gender?: string[] };
+  const peaks0 = init.peaks;
+  const pg: (string | null)[] = peaks0.map((_, k) => init.peak_gender?.[k] ?? null);
   const r = peaks0[0].length;
   let A: number[] = Array.from({ length: r * r }, (_, i) => (i % (r + 1) === 0 ? 1 : 0));
   let q = peaks0;
@@ -59,9 +62,14 @@ export async function territory(
     q = Array.from({ length: p.K }, (_, k) => p.q.slice(k * r, (k + 1) * r));
   }
 
-  const { results } = await env.DB.prepare("SELECT id, z, score, look FROM applicants WHERE z IS NOT NULL").all<{
-    id: number; z: string; score: number | null; look: number | null;
-  }>();
+  const { results } = await env.DB.prepare(
+    "SELECT id, z, score, look FROM applicants WHERE z IS NOT NULL AND (?1 IS NULL OR gender = ?1)",
+  ).bind(gender).all<{ id: number; z: string; score: number | null; look: number | null }>();
+  // This group's peaks, keeping their global numbers (k) for colours/labels.
+  const keep = q.map((_, k) => gender === null || pg[k] === null || pg[k] === gender);
+  const ks = q.map((_, k) => k).filter((k) => keep[k]);
+  if (ks.length) q = ks.map((k) => q[k]);
+  else ks.push(...q.map((_, k) => k));
   if (own) {
     for (const f of results) {
       const o = own.faces.get(f.id);
@@ -75,7 +83,7 @@ export async function territory(
   });
   const hillOf = (p: number[]) => {
     const d = q.map((qk) => qk.reduce((s, x, i) => s + (p[i] - x) ** 2, 0));
-    return d.indexOf(Math.min(...d));
+    return ks[d.indexOf(Math.min(...d))];
   };
 
   // Pick the plane that pulls the peaks apart first (so each look's
@@ -112,7 +120,7 @@ export async function territory(
 
   return {
     faces: results.map((f, i) => ({ id: f.id, x: fxy[i][0], y: fxy[i][1], hill: f.look ?? hillOf(zp[i]), score: f.score })),
-    peaks: pxy.map(([x, y], k) => ({ k, x, y })),
+    peaks: pxy.map(([x, y], i) => ({ k: ks[i], x, y })),
     grid: { n: gridN, xmin, xmax, ymin, ymax, h },
   };
 }

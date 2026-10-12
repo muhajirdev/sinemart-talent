@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS applicants (
   score      REAL,                         -- hills-model score
   score_std  REAL,                         -- bootstrap spread of the score
   model      TEXT,                         -- which model wrote the score
+  gender     TEXT,                         -- 'f' cewek | 'm' cowok: groups battles and hills, never the score
+  gender_src TEXT,                         -- 'siglip' (zero-shot guess) | 'manual' (fixed on the scores page)
   updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS applicants_score ON applicants (score DESC);

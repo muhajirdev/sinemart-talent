@@ -3,13 +3,13 @@
 // The same fit also runs on one rater's picks alone (their personal taste);
 // those models are cached in rater_models and never touch the shared scores.
 
-import { Arrow, Hills, Pick, agreement, nextPairs, rng, split } from "./hills";
+import { Arrow, Hills, Pick, agreement, groupedPairs, rng, split } from "./hills";
 
 export const RETRAIN_EVERY = 10;
 export const MIN_PICKS = 5;
 
 type Env = { DB: D1Database };
-export type Params = { A: number[]; q: number[]; r: number; K: number };
+export type Params = { A: number[]; q: number[]; r: number; K: number; pg?: (string | null)[] };
 
 async function runBatches(db: D1Database, stmts: D1PreparedStatement[], size = 200) {
   for (let i = 0; i < stmts.length; i += size) await db.batch(stmts.slice(i, i + size));
@@ -19,12 +19,16 @@ async function runBatches(db: D1Database, stmts: D1PreparedStatement[], size = 2
 export async function loadData(env: Env, rater: string | null = null) {
   const model = await env.DB.prepare("SELECT init FROM model WHERE id = 1").first<{ init: string }>();
   if (!model?.init) return null;
-  const peaks: number[][] = JSON.parse(model.init).peaks;
+  const init = JSON.parse(model.init) as { peaks: number[][]; peak_gender?: string[] };
+  const peaks = init.peaks;
+  const peakGroup: (string | null)[] = init.peak_gender ?? [];
   const faces = (
-    await env.DB.prepare("SELECT id, z FROM applicants WHERE z IS NOT NULL ORDER BY id").all<{ id: number; z: string }>()
+    await env.DB.prepare("SELECT id, z, gender FROM applicants WHERE z IS NOT NULL ORDER BY id")
+      .all<{ id: number; z: string; gender: string | null }>()
   ).results;
   const index = new Map(faces.map((f, i) => [f.id, i]));
   const Z = faces.map((f) => JSON.parse(f.z) as number[]);
+  const G = faces.map((f) => f.gender);
   const rows = (
     await env.DB.prepare(
       `SELECT rater, winner_id, CASE WHEN winner_id = left_id THEN right_id ELSE left_id END AS loser_id
@@ -32,15 +36,17 @@ export async function loadData(env: Env, rater: string | null = null) {
     )
       .bind(rater)
       .all<{ rater: string; winner_id: number; loser_id: number }>()
-  ).results.filter((r) => index.has(r.winner_id) && index.has(r.loser_id));
+  ).results.filter((r) => index.has(r.winner_id) && index.has(r.loser_id))
+    // A battle that crossed groups (before a gender fix) says nothing within one.
+    .filter((r) => G[index.get(r.winner_id)!] === G[index.get(r.loser_id)!]);
   const picks: (Pick & { rater: string })[] = rows.map((r) => ({
     w: index.get(r.winner_id)!, l: index.get(r.loser_id)!, rater: r.rater,
   }));
-  return { peaks, faces, index, Z, picks };
+  return { peaks, peakGroup, faces, index, Z, G, picks };
 }
 
 export function hillsFrom(p: Params) {
-  const h = new Hills(Array.from({ length: p.K }, (_, k) => p.q.slice(k * p.r, (k + 1) * p.r)));
+  const h = new Hills(Array.from({ length: p.K }, (_, k) => p.q.slice(k * p.r, (k + 1) * p.r)), p.pg ?? []);
   h.A = Float64Array.from(p.A);
   return h;
 }
@@ -55,7 +61,7 @@ export async function raterModel(env: Env, rater: string) {
     .bind(rater)
     .first<{ n_picks: number; params: string }>();
   if (cached && cached.n_picks === n) return { data, hills: hillsFrom(JSON.parse(cached.params)), n };
-  const hills = new Hills(data.peaks).fit(data.Z, data.picks);
+  const hills = new Hills(data.peaks, data.peakGroup).fit(data.Z, data.picks, data.G);
   await env.DB.prepare(
     `INSERT INTO rater_models (rater, n_picks, params, trained_at) VALUES (?1, ?2, ?3, datetime('now'))
      ON CONFLICT (rater) DO UPDATE SET n_picks = ?2, params = ?3, trained_at = datetime('now')`,
@@ -68,7 +74,8 @@ export async function raterModel(env: Env, rater: string) {
 export async function retrain(env: Env) {
   const data = await loadData(env);
   if (!data) return { status: "no taste space loaded yet" };
-  const { peaks, faces, Z, picks } = data;
+  const { peaks, peakGroup, faces, Z, G, picks } = data;
+  const fresh = () => new Hills(peaks, peakGroup);
   if (picks.length < MIN_PICKS) return { status: `waiting for ${MIN_PICKS} picks`, picks: picks.length };
 
   // Held-out check: hills vs the straight arrow on picks they didn't see.
@@ -76,21 +83,27 @@ export async function retrain(env: Env) {
   const { by, train, test } = split(picks, faces.length, rand);
   let heldoutHills: number | null = null, heldoutLine: number | null = null;
   if (train.length >= MIN_PICKS && test.length >= 3) {
-    const h = new Hills(peaks).fit(Z, train);
+    const h = fresh().fit(Z, train, G);
     const a = new Arrow(Z[0].length).fit(Z, train);
-    heldoutHills = agreement(Z.map((z) => h.score(z)), test);
+    heldoutHills = agreement(Z.map((z, i) => h.score(z, G[i])), test);
     heldoutLine = agreement(Z.map((z) => a.score(z)), test);
   }
 
   // The ranker: hills on every pick from every rater. Std = spread of 3 bootstrap fits.
-  const main = new Hills(peaks).fit(Z, picks);
-  const scores = Z.map((z) => main.score(z));
-  const hill = Z.map((z) => main.hill(z));
+  const main = fresh().fit(Z, picks, G);
+  const scores = Z.map((z, i) => main.score(z, G[i]));
+  const hill = Z.map((z, i) => main.hill(z, G[i]));
   const runs = [0, 1, 2].map(() => {
     const boot = picks.map(() => picks[Math.floor(rand() * picks.length)]);
-    const s = Z.map((z) => new Hills(peaks).fit(Z, boot, 150).score(z));
-    const mean = s.reduce((x, y) => x + y, 0) / s.length;
-    return s.map((x) => x - mean);
+    const b = fresh().fit(Z, boot, G, 150);
+    const s = Z.map((z, i) => b.score(z, G[i]));
+    // Centre within each group: scores only compare inside a group.
+    const mean = new Map<string | null, number>();
+    for (const g of new Set(G)) {
+      const v = s.filter((_, i) => G[i] === g);
+      mean.set(g, v.reduce((x, y) => x + y, 0) / v.length);
+    }
+    return s.map((x, i) => x - mean.get(G[i])!);
   });
   const std = scores.map((_, i) => {
     const v = runs.map((r) => r[i]);
@@ -100,13 +113,15 @@ export async function retrain(env: Env) {
 
   const now = new Date().toISOString();
   const nPairs = Math.min(500, Math.max(20, faces.length * 3));
-  const pairs = nextPairs(scores, std, nPairs, rand, hill);
+  const pairs = groupedPairs(scores, std, nPairs, rand, hill, G);
   const stmts: D1PreparedStatement[] = faces.map((f, i) =>
     env.DB.prepare(
       "UPDATE applicants SET score = ?1, score_std = ?2, look = ?3, model = 'hills', updated_at = ?4 WHERE id = ?5",
     ).bind(scores[i], std[i], hill[i], now, f.id),
   );
-  stmts.push(env.DB.prepare("DELETE FROM pair_queue WHERE served_at IS NULL"));
+  // Every unanswered pair goes, including ones on screen now: they were chosen
+  // by the old model (and may predate a gender fix). Their picks still count.
+  stmts.push(env.DB.prepare("DELETE FROM pair_queue WHERE done_at IS NULL"));
   for (const p of pairs) {
     stmts.push(
       env.DB.prepare("INSERT INTO pair_queue (left_id, right_id, kind, batch) VALUES (?1, ?2, ?3, ?4)").bind(
@@ -133,13 +148,13 @@ export async function raterAgreement(env: Env) {
   if (!all) return { raters: [], cross: [], same_pair: [] };
   const team = await env.DB.prepare("SELECT params FROM model WHERE id = 1").first<{ params: string | null }>();
   const teamModel = team?.params ? hillsFrom(JSON.parse(team.params)) : null;
-  const teamScores = teamModel ? all.Z.map((z) => teamModel.score(z)) : null;
+  const teamScores = teamModel ? all.Z.map((z, i) => teamModel.score(z, all.G[i])) : null;
   const names = [...new Set(all.picks.map((p) => p.rater))].sort();
   const byRater = new Map(names.map((n) => [n, all.picks.filter((p) => p.rater === n)]));
   const models = new Map<string, number[] | null>();
   for (const n of names) {
     const m = await raterModel(env, n);
-    models.set(n, m?.hills ? all.Z.map((z) => m.hills!.score(z)) : null);
+    models.set(n, m?.hills ? all.Z.map((z, i) => m.hills!.score(z, all.G[i])) : null);
   }
   const raters = names.map((n) => ({
     name: n,

@@ -84,7 +84,14 @@ python -m sinemart.crop ../data/manifest.csv ../data/photos ../data/crops \
   --yunet face_detection_yunet_2023mar.onnx --seg selfie_segmenter.tflite
 python -m sinemart.embed ../data/crops siglip2 ../data/siglip2.npz
 python -m sinemart.embed ../data/crops dinov3  ../data/dinov3.npz   # challenger
+python -m sinemart.gender ../data/crops ../data/gender.csv           # cewek / cowok guess
 ```
+
+Cewek and cowok are scored separately: battles never cross the two, and each
+has its own hills and leaderboard. The COI sheet has no gender column, so
+`sinemart.gender` guesses zero-shot with SigLIP 2 ("a photo of a woman" vs "a
+photo of a man", averaged over a person's face crops). Fix wrong guesses on the
+scores page; a fix survives reloads. Gender never feeds into the score.
 
 One person can have several photos (closeup, full-body 1 and 2). Every photo
 is cropped; each one whose face passes the gate is embedded, and a person's
@@ -105,9 +112,10 @@ cd ../worker && npm install
 npx wrangler d1 create sinemart-talent          # paste the id into wrangler.toml
 npx wrangler r2 bucket create sinemart-talent
 npx wrangler d1 execute sinemart-talent --remote --file schema.sql
+npx wrangler d1 execute sinemart-talent --remote --file migrate.sql   # only for a database made before the gender columns
 npx wrangler secret put ADMIN_TOKEN
 npx wrangler secret put TEAM_CODE               # the shared code on the team link
-python -m sinemart.publish ../data/siglip2.npz ../data/crops/quality.csv ../data/out   # from pipeline/
+python -m sinemart.publish ../data/siglip2.npz ../data/crops/quality.csv ../data/out ../data/gender.csv   # from pipeline/
 npx wrangler d1 execute sinemart-talent --remote --file ../data/out/seed.sql
 rclone copy ../data/crops r2:sinemart-talent/crops --max-depth 1 --include "*.jpg"   # face crops
 rclone copy ../data/crops/photos r2:sinemart-talent/photos                          # whole photos

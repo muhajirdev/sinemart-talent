@@ -6,6 +6,10 @@
 //   t_k   = -|z' - q_k|^2 / 2        height on hill k (peaks equally tall)
 //   score = log sum_k exp t_k        ~ height on the hill the face stands on
 //
+// Cewek and cowok have their own hills (`pg[k]` = group of peak k): a face
+// only stands on its own group's hills, and battles never cross groups, so
+// gender groups people but never feeds into the score itself.
+//
 // A pick "a beat b" means P = sigmoid(score(a) - score(b)). A straight arrow
 // (score = w . z) is fitted on the same picks only to compare against.
 
@@ -48,8 +52,10 @@ export class Hills {
   K: number;
   A: Float64Array; // r x r
   q: Float64Array; // K x r
+  pg: (string | null)[]; // group of each peak (null = any)
 
-  constructor(peaks: number[][]) {
+  constructor(peaks: number[][], peakGroup: (string | null)[] = []) {
+    this.pg = peaks.map((_, k) => peakGroup[k] ?? null);
     this.K = peaks.length;
     this.r = peaks[0].length;
     this.A = new Float64Array(this.r * this.r);
@@ -57,9 +63,16 @@ export class Hills {
     this.q = Float64Array.from(peaks.flat());
   }
 
+  // Peaks a face of group g may stand on (all of them if g has none).
+  private allowed(g: string | null | undefined) {
+    const own = this.pg.map((x) => x === null || x === g);
+    return own.some(Boolean) && g != null ? own : this.pg.map(() => true);
+  }
+
   // Returns score, hill weights pi (K) and z' - q_k (K x r) for one face.
-  private forward(z: number[]) {
+  private forward(z: number[], g?: string | null) {
     const { r, K, A, q } = this;
+    const ok = this.allowed(g);
     const zp = new Float64Array(r);
     for (let i = 0; i < r; i++) for (let j = 0; j < r; j++) zp[i] += A[i * r + j] * z[j];
     const diff = new Float64Array(K * r);
@@ -71,7 +84,7 @@ export class Hills {
         diff[k * r + i] = d;
         d2 += d * d;
       }
-      t[k] = -0.5 * d2;
+      t[k] = ok[k] ? -0.5 * d2 : -Infinity;
     }
     const tmax = Math.max(...t);
     let sum = 0;
@@ -81,23 +94,24 @@ export class Hills {
     return { score: Math.log(sum) + tmax, pi, diff };
   }
 
-  score(z: number[]) {
-    return this.forward(z).score;
+  score(z: number[], g?: string | null) {
+    return this.forward(z, g).score;
   }
 
-  hill(z: number[]) {
-    const { pi } = this.forward(z);
+  hill(z: number[], g?: string | null) {
+    const { pi } = this.forward(z, g);
     return pi.indexOf(Math.max(...pi));
   }
 
-  fit(Z: number[][], picks: Pick[], steps = 300, lr = 0.02, l2 = 0.05) {
+  // G[i] = face i's group (cewek/cowok); faces only stand on their group's hills.
+  fit(Z: number[][], picks: Pick[], G: (string | null)[] = [], steps = 300, lr = 0.02, l2 = 0.05) {
     const { r, K } = this;
     const optA = new Adam(r * r, lr), optQ = new Adam(K * r, lr);
     const n = Math.max(picks.length, 1);
     const used = [...new Set(picks.flatMap((p) => [p.w, p.l]))];
     for (let it = 0; it < steps; it++) {
       const fw: ReturnType<Hills["forward"]>[] = [];
-      for (const i of used) fw[i] = this.forward(Z[i]); // only faces that were judged
+      for (const i of used) fw[i] = this.forward(Z[i], G[i]); // only faces that were judged
       const gA = new Float64Array(r * r), gQ = new Float64Array(K * r);
       for (const { w, l } of picks) {
         const g = -(1 - sigmoid(fw[w].score - fw[l].score)) / n; // dL/d(s_w - s_l)
@@ -124,7 +138,7 @@ export class Hills {
   }
 
   toJSON() {
-    return { A: Array.from(this.A), q: Array.from(this.q), r: this.r, K: this.K };
+    return { A: Array.from(this.A), q: Array.from(this.q), r: this.r, K: this.K, pg: this.pg };
   }
 }
 
@@ -172,6 +186,29 @@ export function split(picks: Pick[], nFaces: number, rand: () => number) {
   }
   const isTest = picks.map(() => rand() < 0.2);
   return { by: "pick" as const, train: picks.filter((_, i) => !isTest[i]), test: picks.filter((_, i) => isTest[i]) };
+}
+
+// Battles only within a group (cewek vs cewek, cowok vs cowok): each group
+// gets its share of the pairs by size.
+export function groupedPairs(
+  scores: number[], std: number[], n: number, rand: () => number, hill: number[], groups: (string | null)[],
+) {
+  const names = [...new Set(groups)];
+  const out: { a: number; b: number; kind: string }[] = [];
+  for (const g of names) {
+    const idx = groups.map((x, i) => (x === g ? i : -1)).filter((i) => i >= 0);
+    if (idx.length < 2) continue;
+    const m = Math.max(1, Math.round((n * idx.length) / groups.length));
+    for (const p of nextPairs(idx.map((i) => scores[i]), idx.map((i) => std[i]), m, rand, idx.map((i) => hill[i]))) {
+      out.push({ a: idx[p.a], b: idx[p.b], kind: p.kind });
+    }
+  }
+  // Interleave groups so raters see both, in a shuffled order.
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
 }
 
 // 70% uncertain (half of them within the same hill), 20% among the top,
