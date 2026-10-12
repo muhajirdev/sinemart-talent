@@ -2,6 +2,7 @@
 <html lang="id">
 <head>
 <meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow, noimageindex">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#202020">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -53,7 +54,6 @@
 <form id="login" class="hide">
   <p>Tulis nama kamu dulu. Semua pilihanmu dicatat dengan nama ini.</p>
   <input id="name" autocomplete="name" placeholder="Nama" maxlength="40" required>
-  <input id="code" placeholder="Kode tim" autocomplete="off">
   <button type="submit">Mulai</button>
   <div id="loginErr"></div>
 </form>
@@ -73,29 +73,25 @@
   const store = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (_) {} };
   const load = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
   let token = qs.get("t") || load("rater");
-  if (qs.get("team")) store("team", qs.get("team"));
   if (qs.get("t")) store("rater", token);
   if (qs.has("t") || qs.has("team")) history.replaceState(null, "", "/");
   const $ = (id) => document.getElementById(id);
   const show = (text) => { $("msg").textContent = text; $("msg").classList.remove("hide");
     $("pair").classList.add("hide"); $("bar").classList.add("hide"); };
 
-  // Name-only sign-in behind the team code (from the team link).
+  // Name-only sign-in, open to anyone.
   function signIn(err) {
     $("login").classList.remove("hide");
     ["msg", "pair", "bar", "who"].forEach((id) => $(id).classList.add("hide"));
-    $("code").value = load("team") || "";
-    $("code").classList.toggle("hide", !!load("team") && !err);
     $("loginErr").textContent = err || "";
     $("name").focus();
   }
   $("login").onsubmit = async (e) => {
     e.preventDefault();
     const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: $("name").value, code: $("code").value.trim() }) });
+      body: JSON.stringify({ name: $("name").value }) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) return signIn(r.status === 403 ? "Kode tim salah." : r.status === 400 ? "Tulis nama kamu (minimal 2 huruf)." : "Gagal masuk, coba lagi.");
-    store("team", $("code").value.trim());
+    if (!r.ok) return signIn(r.status === 400 ? "Tulis nama kamu (minimal 2 huruf)." : "Gagal masuk, coba lagi.");
     store("rater", (token = d.token));
     $("login").classList.add("hide");
     start();

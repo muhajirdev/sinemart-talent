@@ -9,15 +9,17 @@ export interface Env {
   DB: D1Database;
   IMAGES: R2Bucket;
   ADMIN_TOKEN: string;
-  TEAM_CODE: string; // shared code on the team link; with a name it signs a rater in
 }
 
 type Rater = { token: string; name: string };
 
+// The app is open to anyone, but applicant photos must stay out of search engines.
+const NOINDEX = "noindex, nofollow, noimageindex";
+
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
+    headers: { "content-type": "application/json", "cache-control": "no-store", "x-robots-tag": NOINDEX },
   });
 
 async function rater(req: Request, env: Env): Promise<Rater | null> {
@@ -27,11 +29,10 @@ async function rater(req: Request, env: Env): Promise<Rater | null> {
   return env.DB.prepare("SELECT token, name FROM raters WHERE token = ?1").bind(token).first<Rater>();
 }
 
-// Name-only sign-in behind the team code. The same name (any case) is the
-// same rater, so picks stay traceable to a person across devices.
+// Name-only sign-in, open to anyone (Muajir, 2026-10-12). The same name (any
+// case) is the same rater, so picks stay traceable to a person across devices.
 async function login(req: Request, env: Env) {
-  const body = (await req.json().catch(() => ({}))) as { name?: string; code?: string };
-  if (!env.TEAM_CODE || body.code !== env.TEAM_CODE) return json({ error: "wrong team code" }, 403);
+  const body = (await req.json().catch(() => ({}))) as { name?: string };
   const name = String(body.name ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
   if (name.length < 2) return json({ error: "type your name" }, 400);
   const known = await env.DB.prepare("SELECT token, name FROM raters WHERE lower(name) = lower(?1)")
@@ -280,7 +281,7 @@ export default {
       const obj = row ? await env.IMAGES.get(row.image_key) : null;
       if (!obj) return new Response("not found", { status: 404 });
       return new Response(obj.body, {
-        headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400" },
+        headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400", "x-robots-tag": NOINDEX },
       });
     }
     return json({ error: "not found" }, 404);
