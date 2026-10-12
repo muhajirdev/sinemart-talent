@@ -116,6 +116,19 @@ async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionCont
   return json({ ok: true });
 }
 
+// Take back this rater's last answer (from the last 30 minutes) and show the
+// same pair again. Skips can be taken back too.
+async function undoPick(env: Env, who: Rater) {
+  const last = await env.DB.prepare(
+    `SELECT id, left_id, right_id, winner_id FROM picks
+     WHERE rater = ?1 AND created_at > datetime('now', '-30 minutes') ORDER BY id DESC LIMIT 1`,
+  ).bind(who.name).first<{ id: number; left_id: number; right_id: number; winner_id: number | null }>();
+  if (!last) return json({ error: "nothing to undo" }, 404);
+  await env.DB.prepare("DELETE FROM picks WHERE id = ?1").bind(last.id).run();
+  const pair = await withPhotos(env, { queue_id: null, left_id: last.left_id, right_id: last.right_id });
+  return json({ ...pair, was_pick: last.winner_id !== null });
+}
+
 async function maybeRetrain(env: Env) {
   const row = await env.DB.prepare(
     `SELECT (SELECT COUNT(*) FROM picks WHERE winner_id IS NOT NULL) AS picks,
@@ -243,6 +256,7 @@ export default {
       return pair ? json(await withPhotos(env, pair)) : json({ error: "no applicants loaded" }, 404);
     }
     if (url.pathname === "/api/pick" && req.method === "POST") return recordPick(req, env, who, ctx);
+    if (url.pathname === "/api/undo" && req.method === "POST") return undoPick(env, who);
     if (url.pathname === "/api/results" && req.method === "GET") return results(env, only);
     if (url.pathname === "/api/map" && req.method === "GET") {
       const gender = url.searchParams.get("gender");
