@@ -71,6 +71,17 @@ export async function raterModel(env: Env, rater: string) {
   return { data, hills, n };
 }
 
+// "One hill" comparison model: a single peak per group (cewek, cowok),
+// starting at the group's average face. Same picks, same training.
+export function oneHill(Z: number[][], G: (string | null)[]) {
+  const groups = [...new Set(G)];
+  const peaks = groups.map((g) => {
+    const rows = Z.filter((_, i) => G[i] === g);
+    return rows[0].map((_, d) => rows.reduce((s, z) => s + z[d], 0) / rows.length);
+  });
+  return new Hills(peaks, groups);
+}
+
 export async function retrain(env: Env) {
   const data = await loadData(env);
   if (!data) return { status: "no taste space loaded yet" };
@@ -81,13 +92,16 @@ export async function retrain(env: Env) {
   // Held-out check: hills vs the straight arrow on picks they didn't see.
   const rand = rng(picks.length * 7919);
   const { by, train, test } = split(picks, faces.length, rand);
-  let heldoutHills: number | null = null, heldoutLine: number | null = null;
+  let heldoutHills: number | null = null, heldoutLine: number | null = null, heldoutOne: number | null = null;
   if (train.length >= MIN_PICKS && test.length >= 3) {
     const h = fresh().fit(Z, train, G);
     const a = new Arrow(Z[0].length).fit(Z, train);
     heldoutHills = agreement(Z.map((z, i) => h.score(z, G[i])), test);
     heldoutLine = agreement(Z.map((z) => a.score(z)), test);
+    const o = oneHill(Z, G).fit(Z, train, G);
+    heldoutOne = agreement(Z.map((z, i) => o.score(z, G[i])), test);
   }
+  const one = oneHill(Z, G).fit(Z, picks, G);
 
   // The ranker: hills on every pick from every rater. Std = spread of 3 bootstrap fits.
   const main = fresh().fit(Z, picks, G);
@@ -132,11 +146,14 @@ export async function retrain(env: Env) {
   stmts.push(
     env.DB.prepare(
       `UPDATE model SET params = ?1, active = 'hills', heldout_hills = ?2, heldout_line = ?3, n_test = ?4,
-       split_by = ?5, n_picks = ?6, trained_at = ?7 WHERE id = 1`,
-    ).bind(JSON.stringify(main), heldoutHills, heldoutLine, test.length, by, picks.length, now),
+       split_by = ?5, n_picks = ?6, trained_at = ?7, params_one = ?8, heldout_one = ?9 WHERE id = 1`,
+    ).bind(JSON.stringify(main), heldoutHills, heldoutLine, test.length, by, picks.length, now, JSON.stringify(one), heldoutOne),
   );
   await runBatches(env.DB, stmts);
-  return { status: "trained", picks: picks.length, heldout_hills: heldoutHills, heldout_line: heldoutLine, n_test: test.length };
+  return {
+    status: "trained", picks: picks.length, heldout_hills: heldoutHills, heldout_one: heldoutOne,
+    heldout_line: heldoutLine, n_test: test.length,
+  };
 }
 
 // How much the raters agree. For each rater: how often the team ranking

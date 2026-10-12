@@ -51,13 +51,14 @@ export async function territory(
   if (!model?.init) return { faces: [], peaks: [], grid: null };
   const init = JSON.parse(model.init) as { peaks: number[][]; peak_gender?: string[] };
   const peaks0 = init.peaks;
-  const pg: (string | null)[] = peaks0.map((_, k) => init.peak_gender?.[k] ?? null);
+  let pg: (string | null)[] = peaks0.map((_, k) => init.peak_gender?.[k] ?? null);
   const r = peaks0[0].length;
   let A: number[] = Array.from({ length: r * r }, (_, i) => (i % (r + 1) === 0 ? 1 : 0));
   let q = peaks0;
   const params = own ? own.params : model.params;
   if (params) {
-    const p = JSON.parse(params) as { A: number[]; q: number[]; K: number };
+    const p = JSON.parse(params) as { A: number[]; q: number[]; K: number; pg?: (string | null)[] };
+    if (p.pg) pg = p.pg; // a model with its own peaks (one hill per group) carries their groups
     A = p.A;
     q = Array.from({ length: p.K }, (_, k) => p.q.slice(k * r, (k + 1) * r));
   }

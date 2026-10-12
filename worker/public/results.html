@@ -70,6 +70,9 @@
 <div class="chips" id="gsw" hidden>
   <button data-g="f" aria-pressed="true">Cewek</button><button data-g="m" aria-pressed="false">Cowok</button>
 </div>
+<div class="chips" id="msw" hidden>
+  <button data-m="hills" aria-pressed="true">Many hills</button><button data-m="one" aria-pressed="false">One hill</button>
+</div>
 <div class="switch" id="switch" hidden>
   <label for="who">Taste of</label>
   <select id="who"><option value="">All raters (team model)</option></select>
@@ -123,9 +126,10 @@
     }
     $("model").innerHTML = `
       <div class="stats">
-        <div class="stat"><b>${trained ? "Hills" : "Not trained"}</b><span>active model · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} hills` : `${m.hills || 0} hills (looks)`}</span></div>
+        <div class="stat"><b>${!trained ? "Not trained" : m.mode === "one" ? "One hill" : "Many hills"}</b><span>${m.mode === "one" ? "shown here (battles still use many hills)" : "shown here, and picks the battles"} · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} hills` : `${m.hills || 0} hills (looks)`}</span></div>
         <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.total - p.decided} skipped)</span></div>
-        <div class="stat"><b>${pct(m.heldout_hills)}</b><span>hills: held-out agreement</span></div>
+        <div class="stat"><b>${pct(m.heldout_hills)}</b><span>many hills: held-out agreement</span></div>
+        <div class="stat"><b>${pct(m.heldout_one)}</b><span>one hill per group, same test</span></div>
         <div class="stat"><b>${pct(m.heldout_line)}</b><span>straight arrow, same test</span></div>
       </div>
       <p class="note">${trained
@@ -154,7 +158,7 @@
     $("msg").hidden = true;
   }
 
-  const state = { d: null, mean: 0, filter: "all", map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 }, gender: "f", pg: [] };
+  const state = { d: null, mean: 0, filter: "all", map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 }, gender: "f", pg: [], mode: "hills" };
   // Hills are numbered and coloured within their group (cewek / cowok).
   const local = (k) => {
     const pg = state.pg || [];
@@ -369,8 +373,10 @@
 
   async function load() {
     const q = state.rater ? `?rater=${encodeURIComponent(state.rater)}` : "";
-    const g = `${q ? "&" : "?"}gender=${state.gender}`;
-    const [r, mr, ar] = await Promise.all([api("/api/results" + q), api("/api/map" + q + g), api("/api/raters")]);
+    const mq = !state.rater && state.mode === "one" ? `${q ? "&" : "?"}mode=one` : "";
+    const g = `${q || mq ? "&" : "?"}gender=${state.gender}`;
+    $("msw").hidden = !!state.rater;
+    const [r, mr, ar] = await Promise.all([api("/api/results" + q + mq), api("/api/map" + q + mq + g), api("/api/raters")]);
     if (r.status === 401) { $("msg").innerHTML = '<a href="/">Sign in on the picking page first</a>.'; return; }
     const data = await r.json();
     state.pg = data.model?.peak_gender || [];
@@ -384,6 +390,11 @@
     renderMap();
     if (ar.ok) renderAgree(await ar.json());
   }
+  $("msw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
+    state.mode = b.dataset.m; state.filter = "all";
+    $("msw").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    load();
+  }));
   $("gsw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
     state.gender = b.dataset.g; state.filter = "all"; Object.assign(state.view, { x: 0, y: 0, w: 100 });
     $("gsw").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));

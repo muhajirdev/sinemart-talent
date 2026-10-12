@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS model (
   active        TEXT,
   heldout_hills REAL,                      -- held-out agreement, hills model
   heldout_line  REAL,                      -- held-out agreement, straight arrow
+  params_one    TEXT,                      -- comparison model: one hill per group (cewek, cowok)
+  heldout_one   REAL,                      -- held-out agreement, one hill per group
   n_test        INTEGER,
   split_by      TEXT,                      -- 'applicant' or 'pick'
   n_picks       INTEGER NOT NULL DEFAULT 0,  -- picks the current scores learned from

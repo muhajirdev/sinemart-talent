@@ -3,7 +3,7 @@
 // Static UI lives in ../public; everything under /api and /img lands here.
 
 import { territory } from "./map";
-import { MIN_PICKS, RETRAIN_EVERY, raterAgreement, raterModel, retrain } from "./retrain";
+import { MIN_PICKS, RETRAIN_EVERY, hillsFrom, raterAgreement, raterModel, retrain } from "./retrain";
 
 export interface Env {
   DB: D1Database;
@@ -138,11 +138,14 @@ async function maybeRetrain(env: Env) {
   else if (row && row.trained === 0 && row.picks >= 5) await retrain(env);
 }
 
-async function results(env: Env, who: string | null) {
+async function results(env: Env, who: string | null, mode: string | null = null) {
   if (who) return raterResults(env, who);
   const model = await env.DB.prepare(
-    "SELECT active, heldout_hills, heldout_line, n_test, split_by, n_picks, trained_at, init FROM model WHERE id = 1",
+    `SELECT active, heldout_hills, heldout_one, heldout_line, n_test, split_by, n_picks, trained_at, init, params_one
+     FROM model WHERE id = 1`,
   ).first<Record<string, unknown>>();
+  const oneParams = model?.params_one as string | null;
+  if (model) delete model.params_one;
   const picks = await env.DB.prepare(
     "SELECT COUNT(*) AS decided, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters FROM picks WHERE winner_id IS NOT NULL",
   ).first<{ decided: number; total: number; raters: number }>();
@@ -152,12 +155,30 @@ async function results(env: Env, who: string | null) {
        (SELECT COUNT(*) FROM picks p WHERE p.winner_id IS NOT NULL AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
        (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos
      FROM applicants a ORDER BY a.score DESC NULLS LAST, a.id`,
-  ).all();
+  ).all<Record<string, unknown>>();
+  let peakGender: (string | null)[] | null = null;
+  if (mode === "one") {
+    // Same page, ranked by the one-hill-per-group model instead.
+    const one = oneParams ? hillsFrom(JSON.parse(oneParams)) : null;
+    peakGender = one ? one.pg : [];
+    const zs = new Map(
+      (await env.DB.prepare("SELECT id, z FROM applicants WHERE z IS NOT NULL").all<{ id: number; z: string }>())
+        .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
+    );
+    for (const f of faces) {
+      const z = zs.get(f.id as number), g = f.gender as string | null;
+      f.score = one && z ? one.score(z, g) : null;
+      f.look = one && z ? one.hill(z, g) : null;
+      f.score_std = null;
+    }
+    faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
+  }
   const init = model?.init ? JSON.parse(model.init as string) : null;
   if (model) delete model.init;
   return json({
     model: {
-      ...model, hills: init?.peaks?.length ?? 0, peak_gender: init?.peak_gender ?? [],
+      ...model, mode: mode === "one" ? "one" : "hills", hills: init?.peaks?.length ?? 0,
+      peak_gender: peakGender ?? init?.peak_gender ?? [],
       retrain_every: RETRAIN_EVERY,
     },
     picks,
@@ -257,9 +278,17 @@ export default {
     }
     if (url.pathname === "/api/pick" && req.method === "POST") return recordPick(req, env, who, ctx);
     if (url.pathname === "/api/undo" && req.method === "POST") return undoPick(env, who);
-    if (url.pathname === "/api/results" && req.method === "GET") return results(env, only);
+    const mode = url.searchParams.get("mode"); // "one" = one hill per group, for comparison
+    if (url.pathname === "/api/results" && req.method === "GET") return results(env, only, mode);
     if (url.pathname === "/api/map" && req.method === "GET") {
       const gender = url.searchParams.get("gender");
+      if (!only && mode === "one") {
+        const m = await env.DB.prepare("SELECT params_one FROM model WHERE id = 1").first<{ params_one: string | null }>();
+        const r = (await (await results(env, null, "one")).json()) as { faces: { id: number; score: number | null; look: number | null }[] };
+        return json(await territory(env, {
+          params: m?.params_one ?? null, faces: new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }])),
+        }, gender));
+      }
       if (!only) return json(await territory(env, undefined, gender));
       const r = (await (await raterResults(env, only)).json()) as {
         params: string | null; faces: { id: number; score: number | null; look: number | null }[];
