@@ -63,7 +63,7 @@ export async function retrain(env: Env) {
 
   const now = new Date().toISOString();
   const nPairs = Math.min(500, Math.max(20, faces.length * 3));
-  const pairs = nextPairs(scores, std, nPairs, rand);
+  const pairs = nextPairs(scores, std, nPairs, rand, hill);
   const stmts: D1PreparedStatement[] = faces.map((f, i) =>
     env.DB.prepare(
       "UPDATE applicants SET score = ?1, score_std = ?2, look = ?3, model = 'hills', updated_at = ?4 WHERE id = ?5",

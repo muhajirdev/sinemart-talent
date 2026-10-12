@@ -68,7 +68,7 @@ def run(npz: Path, picks: Path, out: Path, n_pairs: int = 2000, looks_k: int = 1
         for i in np.argsort(-scores):
             wr.writerow([int(ids[i]), f"{scores[i]:.5f}", f"{std[i]:.5f}", int(hill[i])])
 
-    pairs, kinds = next_pairs(scores, std, n_pairs, seed=seed)
+    pairs, kinds = next_pairs(scores, std, n_pairs, seed=seed, hill=hill if len(winners) else None)
     batch = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     lines = ["DELETE FROM pair_queue WHERE served_at IS NULL;"]
     for i in range(len(ids)):

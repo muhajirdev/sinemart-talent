@@ -186,3 +186,12 @@ def test_train_cli_end_to_end(tmp_path):
     # Cold start: no picks at all still produces a queue.
     (tmp_path / "none.csv").write_text("winner_id,loser_id\n")
     assert "heads" not in run(tmp_path / "e.npz", tmp_path / "none.csv", tmp_path / "cold", n_pairs=10)
+
+
+def test_half_the_uncertain_pairs_stay_on_one_hill():
+    rng = np.random.default_rng(0)
+    scores, std = rng.normal(size=400), rng.random(400)
+    hill = np.arange(400) % 4
+    pairs, kinds = next_pairs(scores, std, 1000, top_k=50, seed=0, hill=hill)
+    assert kinds.count("same_hill") == 350 and kinds.count("uncertain") == 350
+    assert all(hill[a] == hill[b] for (a, b), k in zip(pairs, kinds) if k == "same_hill")

@@ -311,12 +311,13 @@ def compare_heads(emb, winners, losers, looks: Looks, test_frac=0.2, seed=0, l2=
 # --------------------------------------------------------------------------- pair selection
 
 
-def next_pairs(scores, std, n: int, mix=(0.7, 0.2, 0.1), top_k: int = 500, near: int = 5, seed=None):
+def next_pairs(scores, std, n: int, mix=(0.7, 0.2, 0.1), top_k: int = 500, near: int = 5, seed=None, hill=None):
     """Choose n pairs: mix[0] uncertain, mix[1] among the top_k, mix[2] random.
 
     Uncertain: draw a face weighted by its score std, pair it with one of the
     `near` faces closest in score, so the outcome is a coin flip the model
-    can't yet call. Top: both faces from the current top_k, to sharpen the
+    can't yet call. Given `hill`, every other uncertain pair stays on the
+    face's own hill, to pin down where that look's peak sits. Top: both faces from the current top_k, to sharpen the
     order where the shortlist is drawn. Random: keeps the whole range honest.
     """
     rng = np.random.default_rng(seed)
@@ -330,7 +331,15 @@ def next_pairs(scores, std, n: int, mix=(0.7, 0.2, 0.1), top_k: int = 500, near:
     pairs, kinds = [], []
 
     p = std / std.sum() if std.sum() > 0 else None
-    for a in rng.choice(m, n_unc, p=p):
+    for i, a in enumerate(rng.choice(m, n_unc, p=p)):
+        if hill is not None and i % 2 == 0:
+            mine = order[hill[order] == hill[a]]
+            r = int(np.flatnonzero(mine == a)[0])
+            cand = [x for x in mine[max(0, r - near) : r + near + 1] if x != a]
+            if cand:
+                pairs.append((int(a), int(rng.choice(cand))))
+                kinds.append("same_hill")
+                continue
         r = rank[a]
         lo, hi = max(0, r - near), min(m, r + near + 1)
         cand = [order[i] for i in range(lo, hi) if order[i] != a]

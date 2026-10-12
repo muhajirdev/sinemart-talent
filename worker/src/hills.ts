@@ -174,8 +174,12 @@ export function split(picks: Pick[], nFaces: number, rand: () => number) {
   return { by: "pick" as const, train: picks.filter((_, i) => !isTest[i]), test: picks.filter((_, i) => isTest[i]) };
 }
 
-// 70% uncertain, 20% among the top, 10% random; sides shuffled.
-export function nextPairs(scores: number[], std: number[], n: number, rand: () => number, topK = 500, near = 5) {
+// 70% uncertain (half of them within the same hill), 20% among the top,
+// 10% random; sides shuffled. Same-hill battles pin down where each look's
+// peak sits; cross-hill battles keep the looks comparable.
+export function nextPairs(
+  scores: number[], std: number[], n: number, rand: () => number, hill?: number[], topK = 500, near = 5,
+) {
   const m = scores.length;
   const order = scores.map((_, i) => i).sort((a, b) => scores[a] - scores[b]);
   const rank = new Array<number>(m);
@@ -197,6 +201,15 @@ export function nextPairs(scores: number[], std: number[], n: number, rand: () =
   };
   for (let i = 0; i < nUnc; i++) {
     const a = pickWeighted();
+    if (hill && i % 2 === 0) {
+      const mine = order.filter((x) => hill[x] === hill[a]); // same hill, in score order
+      const r = mine.indexOf(a);
+      const cand = mine.slice(Math.max(0, r - near), r + near + 1).filter((x) => x !== a);
+      if (cand.length) {
+        pairs.push({ a, b: cand[Math.floor(rand() * cand.length)], kind: "same_hill" });
+        continue;
+      }
+    }
     const cand = order.slice(Math.max(0, rank[a] - near), Math.min(m, rank[a] + near + 1)).filter((x) => x !== a);
     pairs.push({ a, b: cand[Math.floor(rand() * cand.length)], kind: "uncertain" });
   }

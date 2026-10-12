@@ -28,7 +28,7 @@ Drive photos ──► crop/align/grey/gate ──► SigLIP 2 (or DINOv3) embed
   from each look's centre (B), and a small MLP (C). They sit next to the hills
   model in the held-out report so you can see whether the hills earn their
   keep.
-- **Pairs:** 70% uncertain (faces the hills model can't place yet, measured
+- **Pairs:** 70% uncertain, half of them between two faces on the same hill (faces the hills model can't place yet, measured
   by the spread of a 5-model bootstrap ensemble), 20% from the
   current top 500, 10% random. Left and right are shuffled.
 - **Measured:** held-out agreement on *unseen applicants* (the split holds out
