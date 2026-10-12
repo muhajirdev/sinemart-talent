@@ -1,5 +1,8 @@
-// Sinemart A/B picking app: serves pairs of applicant crops, records picks.
+// Sinemart A/B picking app: serves pairs of applicant crops, records picks,
+// retrains the hills model as picks come in, and reports scores.
 // Static UI lives in ../public; everything under /api and /img lands here.
+
+import { RETRAIN_EVERY, retrain } from "./retrain";
 
 export interface Env {
   DB: D1Database;
@@ -43,7 +46,7 @@ async function nextPair(env: Env, who: Rater) {
   return { queue_id: null, left_id: results[0].id, right_id: results[1].id };
 }
 
-async function recordPick(req: Request, env: Env, who: Rater) {
+async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionContext) {
   const body = (await req.json()) as {
     queue_id: number | null;
     left_id: number;
@@ -76,7 +79,39 @@ async function recordPick(req: Request, env: Env, who: Rater) {
     stmts.push(env.DB.prepare("UPDATE pair_queue SET done_at = datetime('now') WHERE id = ?1").bind(queue_id));
   }
   await env.DB.batch(stmts);
+  if (winner_id !== null) ctx.waitUntil(maybeRetrain(env));
   return json({ ok: true });
+}
+
+async function maybeRetrain(env: Env) {
+  const row = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM picks WHERE winner_id IS NOT NULL) AS picks,
+            (SELECT n_picks FROM model WHERE id = 1) AS trained`,
+  ).first<{ picks: number; trained: number | null }>();
+  if (row && row.trained !== null && row.picks - row.trained >= RETRAIN_EVERY) await retrain(env);
+  else if (row && row.trained === 0 && row.picks >= 5) await retrain(env);
+}
+
+async function results(env: Env) {
+  const model = await env.DB.prepare(
+    "SELECT active, heldout_hills, heldout_line, n_test, split_by, n_picks, trained_at, init FROM model WHERE id = 1",
+  ).first<Record<string, unknown>>();
+  const picks = await env.DB.prepare(
+    "SELECT COUNT(*) AS decided, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters FROM picks WHERE winner_id IS NOT NULL",
+  ).first<{ decided: number; total: number; raters: number }>();
+  const { results: faces } = await env.DB.prepare(
+    `SELECT a.id, a.score, a.score_std, a.look,
+       (SELECT COUNT(*) FROM picks p WHERE p.winner_id = a.id) AS wins,
+       (SELECT COUNT(*) FROM picks p WHERE p.winner_id IS NOT NULL AND (p.left_id = a.id OR p.right_id = a.id)) AS games
+     FROM applicants a ORDER BY a.score DESC NULLS LAST, a.id`,
+  ).all();
+  const init = model?.init ? JSON.parse(model.init as string) : null;
+  if (model) delete model.init;
+  return json({
+    model: { ...model, embedding: init?.model ?? null, hills: init?.peaks?.length ?? 0, retrain_every: RETRAIN_EVERY },
+    picks,
+    faces,
+  });
 }
 
 async function exportPicks(env: Env) {
@@ -91,7 +126,7 @@ async function exportPicks(env: Env) {
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
 
     if (url.pathname === "/api/export.csv") {
@@ -110,7 +145,9 @@ export default {
       const pair = await nextPair(env, who);
       return pair ? json(pair) : json({ error: "no applicants loaded" }, 404);
     }
-    if (url.pathname === "/api/pick" && req.method === "POST") return recordPick(req, env, who);
+    if (url.pathname === "/api/pick" && req.method === "POST") return recordPick(req, env, who, ctx);
+    if (url.pathname === "/api/results" && req.method === "GET") return results(env);
+    if (url.pathname === "/api/retrain" && req.method === "POST") return json(await retrain(env));
 
     const img = url.pathname.match(/^\/img\/(\d+)$/);
     if (img) {

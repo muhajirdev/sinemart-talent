@@ -15,6 +15,7 @@
   header { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 0 8px; }
   header h1 { font-size: 15px; font-weight: 600; margin: 0; }
   header span { color: var(--muted); font-size: 14px; }
+  header a { color: var(--accent); font-size: 14px; text-decoration: none; white-space: nowrap; }
   #pair { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 0; }
   @media (max-aspect-ratio: 3/4) { #pair { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
   button.face { all: unset; cursor: pointer; position: relative; border-radius: 12px; overflow: hidden;
@@ -34,7 +35,7 @@
 <body>
 <header>
   <h1>Siapa lebih layar? <span>Who's more screen-worthy?</span></h1>
-  <span id="count"></span>
+  <a id="count" href="/results.html"></a>
 </header>
 <div id="msg" class="hide"></div>
 <main id="pair" class="hide">
@@ -81,7 +82,7 @@
     $("right").querySelector("img").src = imgUrl(p.right_id);
     document.querySelectorAll(".face").forEach((b) => b.classList.remove("chosen"));
     $("msg").classList.add("hide"); $("pair").classList.remove("hide"); $("bar").classList.remove("hide");
-    $("count").textContent = `${picks} pilihan`;
+    $("count").textContent = `${picks} pilihan · skor →`;
     shownAt = performance.now();
     next = fetchPair().catch(() => null);
   }

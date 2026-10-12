@@ -177,7 +177,7 @@ class HillsHead:
         # spread; peaks start at the look centres. Picks then move both.
         mu = emb.mean(0)
         _, sv, vt = np.linalg.svd(emb - mu, full_matrices=False)
-        r = min(self.rank, vt.shape[0])
+        r = min(self.rank, int((sv > 1e-6 * sv[0]).sum()))  # skip empty directions
         self.mu = mu
         self.P = vt[:r] / (sv[:r, None] / np.sqrt(len(emb)) + 1e-8)
         self.q = (self.looks.centroids - mu) @ self.P.T

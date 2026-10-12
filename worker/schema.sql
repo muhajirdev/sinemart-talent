@@ -5,10 +5,11 @@ CREATE TABLE IF NOT EXISTS applicants (
   id         INTEGER PRIMARY KEY,          -- Sinemart applicant number
   image_key  TEXT NOT NULL,                -- R2 key of the aligned grey crop
   stage      TEXT,                         -- Drive selection folder, if any
-  look       INTEGER,                      -- k-means cluster from training
-  score      REAL,                         -- current head's score
-  score_std  REAL,                         -- linear-head posterior std
-  model      TEXT,                         -- which head wrote the score
+  z          TEXT,                         -- JSON taste-space coordinates (from the pipeline)
+  look       INTEGER,                      -- hill the face stands on (k-means look before training)
+  score      REAL,                         -- hills-model score
+  score_std  REAL,                         -- bootstrap spread of the score
+  model      TEXT,                         -- which model wrote the score
   updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS applicants_score ON applicants (score DESC);
@@ -44,3 +45,18 @@ CREATE TABLE IF NOT EXISTS picks (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS picks_rater ON picks (rater);
+
+-- The live hills model: one row. `init` (look peaks in taste space) comes
+-- from the pipeline; everything else is written by each retrain.
+CREATE TABLE IF NOT EXISTS model (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  init          TEXT,
+  params        TEXT,
+  active        TEXT,
+  heldout_hills REAL,                      -- held-out agreement, hills model
+  heldout_line  REAL,                      -- held-out agreement, straight arrow
+  n_test        INTEGER,
+  split_by      TEXT,                      -- 'applicant' or 'pick'
+  n_picks       INTEGER NOT NULL DEFAULT 0,  -- picks the current scores learned from
+  trained_at    TEXT
+);

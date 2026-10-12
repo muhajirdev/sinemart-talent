@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#202020">
+<title>Sinemart Scores</title>
+<style>
+  :root { --bg: #202020; --card: #2b2b2b; --fg: #f2f2f2; --muted: #9a9a9a; --accent: #f5c242; --good: #7bd88f; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom)); max-width: 760px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 0; }
+  h1 { font-size: 17px; margin: 0; }
+  a { color: var(--accent); text-decoration: none; }
+  .card { background: var(--card); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .note { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
+  button { background: var(--accent); color: #111; border: 0; border-radius: 999px; padding: 9px 18px; font-weight: 600; font-size: 14px; }
+  button:disabled { opacity: .5; }
+  ol { list-style: none; padding: 0; margin: 0; }
+  li { display: grid; grid-template-columns: 34px 72px 1fr; gap: 12px; align-items: center;
+    background: var(--card); border-radius: 12px; padding: 10px; margin-bottom: 10px; }
+  li .rank { font-size: 20px; font-weight: 700; text-align: center; color: var(--muted); }
+  li:first-child .rank { color: var(--accent); }
+  li img { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; background: #808080; }
+  .score { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .bar { height: 6px; background: #444; border-radius: 3px; margin: 4px 0 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--good); }
+  .meta { color: var(--muted); font-size: 13px; }
+  #msg { color: var(--muted); padding: 30px 0; text-align: center; }
+</style>
+</head>
+<body>
+<header><h1>Skor kecantikan · Beauty scores</h1><a href="/">← Pilih</a></header>
+<div id="msg">Loading…</div>
+<section id="model" class="card" hidden></section>
+<ol id="faces"></ol>
+<script>
+(() => {
+  let token = null;
+  try { token = new URLSearchParams(location.search).get("t") || localStorage.getItem("rater");
+    if (token) localStorage.setItem("rater", token); } catch (_) {}
+  const $ = (id) => document.getElementById(id);
+  if (!token) { $("msg").textContent = "Open your personal rater link first."; return; }
+  const api = (path, opts = {}) => fetch(path, { ...opts, headers: { "x-rater-token": token } });
+  const pct = (x) => (x == null ? "–" : Math.round(x * 100) + "%");
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+  function render(d) {
+    const m = d.model || {};
+    const p = d.picks || { decided: 0, total: 0, raters: 0 };
+    const trained = !!m.trained_at;
+    const scored = d.faces.filter((f) => f.score != null);
+    const mean = scored.reduce((a, f) => a + f.score, 0) / (scored.length || 1);
+    const toNext = Math.max(0, (m.n_picks || 0) + m.retrain_every - p.decided);
+    $("model").hidden = false;
+    $("model").innerHTML = `
+      <div class="stats">
+        <div class="stat"><b>${trained ? "Hills" : "Not trained"}</b><span>active model · ${m.hills || 0} hills (looks)</span></div>
+        <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.total - p.decided} skipped)</span></div>
+        <div class="stat"><b>${pct(m.heldout_hills)}</b><span>hills: held-out agreement</span></div>
+        <div class="stat"><b>${pct(m.heldout_line)}</b><span>straight arrow, same test</span></div>
+      </div>
+      <p class="note">${trained
+        ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
+        : "Learning starts after 5 picks."}
+        Retrains by itself every ${m.retrain_every} picks${trained ? ` (next in ${toNext})` : ""}.
+        Embeddings: ${esc(m.embedding || "–")}.</p>
+      <p class="note">Score = how often (0–100) this face would win against an average applicant here.
+        "Hill" = which look's peak the face is closest to.</p>
+      <p style="margin:12px 0 0"><button id="retrain">Retrain now</button></p>`;
+    $("retrain").onclick = async (e) => {
+      e.target.disabled = true; e.target.textContent = "Training…";
+      const r = await (await api("/api/retrain", { method: "POST" })).json();
+      if (r.status !== "trained") alert(r.status);
+      load();
+    };
+    $("faces").innerHTML = d.faces.map((f, i) => {
+      const beat = f.score == null ? null : 1 / (1 + Math.exp(-(f.score - mean)));
+      return `<li>
+        <div class="rank">${f.score == null ? "–" : i + 1}</div>
+        <img src="/img/${f.id}?t=${encodeURIComponent(token)}" alt="Applicant ${f.id}" loading="lazy">
+        <div>
+          <div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
+          <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>
+          <div class="meta">#${f.id} · hill ${f.look ?? "–"} · won ${f.wins}/${f.games}
+            ${f.score == null ? "" : ` · ±${(f.score_std ?? 0).toFixed(2)}`}</div>
+        </div></li>`;
+    }).join("");
+    $("msg").hidden = true;
+  }
+
+  async function load() {
+    const r = await api("/api/results");
+    if (!r.ok) { $("msg").textContent = "Unknown rater link."; return; }
+    render(await r.json());
+  }
+  load();
+})();
+</script>
+</body>
+</html>
