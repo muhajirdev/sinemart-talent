@@ -44,7 +44,7 @@ function height(p: number[], q: number[][]) {
 export async function territory(
   env: Env,
   own?: { params: string | null; faces: Map<number, { score: number | null; hill: number | null }> },
-  gridN = 48,
+  gridN = 64,
 ) {
   const model = await env.DB.prepare("SELECT init, params FROM model WHERE id = 1").first<{ init: string; params: string | null }>();
   if (!model?.init) return { faces: [], peaks: [], grid: null };

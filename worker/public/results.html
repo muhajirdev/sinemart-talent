@@ -36,7 +36,11 @@
   h2 { font-size: 15px; margin: 0 0 8px; }
   .h1c { --c: #3987e5; } .h2c { --c: #d95926; } .h3c { --c: #199e70; } .h4c { --c: #c98500; }
   .h5c { --c: #d55181; } .h6c { --c: #008300; } .h7c { --c: #9085e9; } .h8c { --c: #e66767; }
-  #map svg { width: 100%; height: auto; display: block; border-radius: 8px; background: #1a1a19; touch-action: manipulation; }
+  #mapsvg { position: relative; }
+  #map svg { width: 100%; height: auto; display: block; border-radius: 8px; background: #1a1a19; touch-action: none; overflow: hidden; cursor: grab; user-select: none; -webkit-user-select: none; }
+  #map svg.drag { cursor: grabbing; }
+  .zoom { position: absolute; right: 8px; top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .zoom button { width: 36px; height: 36px; padding: 0; border-radius: 10px; background: #2b2b2bdd; color: var(--fg); border: 1px solid #555; font-size: 18px; font-weight: 600; }
   #map .face { cursor: pointer; }
   #map .face circle.ring { fill: none; stroke: var(--c); stroke-width: 0.9; }
   #map .face.sel circle.ring { stroke: #fff; stroke-width: 1.2; }
@@ -69,7 +73,7 @@
 <section id="map" class="card" hidden>
   <h2>Peta wilayah · Territory map</h2>
   <div id="mapsvg"></div>
-  <div id="tip" class="meta">Tap a face.</div>
+  <div id="tip" class="meta">Tap a face. Drag to move, pinch or scroll to zoom, double-tap to zoom in.</div>
   <div class="legend" id="legend"></div>
   <p class="note">Brighter ground = higher on a hill. ▲ = a look's peak (its ideal face). Faces are ringed in
     the colour of the hill they stand on. This is a flat slice of a higher-dimensional map, so distances are
@@ -146,7 +150,7 @@
     $("msg").hidden = true;
   }
 
-  const state = { d: null, mean: 0, filter: "all", map: null, sel: null, rater: "" };
+  const state = { d: null, mean: 0, filter: "all", map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 } };
   const hc = (k) => `h${(k % 8) + 1}c`; // fixed palette order; labels carry identity past 8
   const beatOf = (f) => (f.score == null ? null : 1 / (1 + Math.exp(-(f.score - state.mean))));
 
@@ -191,17 +195,21 @@
     });
     ctx.putImageData(img, 0, 0);
     const info = new Map(d.faces.map((f, i) => [f.id, { ...f, rank: f.score == null ? null : i + 1 }]));
-    const peaks = m.peaks.map((p) => `<g class="peak ${hc(p.k)}" transform="translate(${sx(p.x)},${sy(p.y)})">
+    const peaks = m.peaks.map((p) => `<g class="peak mark ${hc(p.k)}" data-x="${sx(p.x)}" data-y="${sy(p.y)}">
         <path d="M0,-3.2 L2.8,1.8 L-2.8,1.8 Z"/><text x="3.4" y="1.2">H${p.k + 1}</text></g>`).join("");
-    const faces = m.faces.map((f) => `<g class="face ${hc(f.hill)}" data-id="${f.id}" transform="translate(${sx(f.x)},${sy(f.y)})">
+    const faces = m.faces.map((f) => `<g class="face mark ${hc(f.hill)}" data-id="${f.id}" data-x="${sx(f.x)}" data-y="${sy(f.y)}">
         <clipPath id="c${f.id}"><circle r="4.6"/></clipPath>
         <circle r="7" fill="transparent"/>
         <image href="/img/${f.id}?t=${encodeURIComponent(token)}" x="-4.6" y="-4.6" width="9.2" height="9.2" clip-path="url(#c${f.id})"/>
         <circle class="ring" r="5"/></g>`).join("");
     $("mapsvg").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Map of faces and look peaks">
       <image href="${cv.toDataURL()}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>
-      ${faces}${peaks}</svg>`;
+      ${faces}${peaks}</svg>
+      <div class="zoom"><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">−</button>
+        <button id="zfit" aria-label="Show whole map">⤢</button></div>`;
+    const drag = panZoom($("mapsvg").querySelector("svg"));
     $("mapsvg").querySelectorAll(".face").forEach((el) => (el.onclick = () => {
+      if (drag.moved) return;
       const f = info.get(Number(el.dataset.id));
       $("mapsvg").querySelectorAll(".face").forEach((x) => x.classList.toggle("sel", x === el));
       const beat = beatOf(f);
@@ -210,6 +218,87 @@
     const counts = {};
     m.faces.forEach((f) => (counts[f.hill] = (counts[f.hill] || 0) + 1));
     $("legend").innerHTML = m.peaks.map((p) => `<span class="${hc(p.k)}"><i></i>Hill ${p.k + 1} · ${counts[p.k] || 0} faces</span>`).join("");
+  }
+
+  // Pan and zoom by moving the viewBox. Faces and peaks keep their size on
+  // screen while zooming, so a crowded hill spreads out as you zoom in.
+  function panZoom(svg) {
+    const v = state.view, MIN = 100 / 16;
+    state.ac?.abort(); // drop the window listeners of the previous map
+    state.ac = new AbortController();
+    const signal = state.ac.signal;
+    const marks = [...svg.querySelectorAll(".mark")];
+    const apply = () => {
+      svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.w}`);
+      const k = Math.max(v.w / 100, 0.35);
+      marks.forEach((el) => el.setAttribute("transform", `translate(${el.dataset.x},${el.dataset.y}) scale(${k})`));
+    };
+    const clamp = () => {
+      v.w = Math.min(100, Math.max(MIN, v.w));
+      v.x = Math.min(100 - v.w, Math.max(0, v.x));
+      v.y = Math.min(100 - v.w, Math.max(0, v.y));
+    };
+    const toMap = (cx, cy) => {
+      const r = svg.getBoundingClientRect();
+      return [v.x + ((cx - r.left) / r.width) * v.w, v.y + ((cy - r.top) / r.height) * v.w];
+    };
+    const zoomAt = (f, mx, my) => {
+      const w = Math.min(100, Math.max(MIN, v.w * f));
+      v.x = mx - ((mx - v.x) * w) / v.w; v.y = my - ((my - v.y) * w) / v.w; v.w = w;
+      clamp(); apply();
+    };
+    const zoomCentre = (f) => zoomAt(f, v.x + v.w / 2, v.y + v.w / 2);
+    $("zin").onclick = () => zoomCentre(0.6);
+    $("zout").onclick = () => zoomCentre(1 / 0.6);
+    $("zfit").onclick = () => { v.x = v.y = 0; v.w = 100; apply(); };
+    svg.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      zoomAt(Math.exp(e.deltaY * 0.0015), ...toMap(e.clientX, e.clientY));
+    }, { passive: false });
+    svg.addEventListener("dblclick", (e) => zoomAt(0.5, ...toMap(e.clientX, e.clientY)));
+
+    // One finger or mouse drags; two fingers pinch.
+    const pts = new Map(), st = { moved: false };
+    let start = null;
+    const snapshot = () => {
+      const p = [...pts.values()];
+      const mid = p.length > 1 ? [(p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2] : p[0];
+      const dist = p.length > 1 ? Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]) : 0;
+      start = { mid, dist, v: { ...v }, map: toMap(...mid) };
+    };
+    svg.addEventListener("pointerdown", (e) => {
+      pts.set(e.pointerId, [e.clientX, e.clientY]);
+      if (pts.size === 1) st.moved = false;
+      snapshot();
+    });
+    addEventListener("pointermove", (e) => {
+      if (!pts.has(e.pointerId) || !start) return;
+      pts.set(e.pointerId, [e.clientX, e.clientY]);
+      const p = [...pts.values()];
+      const mid = p.length > 1 ? [(p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2] : p[0];
+      if (!st.moved && Math.hypot(mid[0] - start.mid[0], mid[1] - start.mid[1]) < 4 && p.length === 1) return;
+      st.moved = true;
+      svg.classList.add("drag");
+      const r = svg.getBoundingClientRect();
+      let w = start.v.w;
+      if (p.length > 1 && start.dist > 0) {
+        w = Math.min(100, Math.max(MIN, start.v.w * (start.dist / Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]))));
+      }
+      // Keep the map point that was under the fingers under them.
+      v.w = w;
+      v.x = start.map[0] - ((mid[0] - r.left) / r.width) * w;
+      v.y = start.map[1] - ((mid[1] - r.top) / r.height) * w;
+      clamp(); apply();
+    }, { signal });
+    const up = (e) => {
+      if (!pts.delete(e.pointerId)) return;
+      svg.classList.remove("drag");
+      if (pts.size) snapshot(); else start = null;
+    };
+    addEventListener("pointerup", up, { signal });
+    addEventListener("pointercancel", up, { signal });
+    apply();
+    return st;
   }
 
   function renderAgree(a) {
