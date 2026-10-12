@@ -1,19 +1,27 @@
-"""Bradley-Terry heads on frozen embeddings, evaluation, and pair selection.
+"""Bradley-Terry ranking on frozen embeddings: the hills model, baselines,
+evaluation, and pair selection.
 
-A pick "a beat b" says P(a > b) = sigmoid(s(a) - s(b)). Three heads share the
-same picks and compete on held-out agreement:
+A pick "a beat b" says P(a > b) = sigmoid(s(a) - s(b)).
+
+The ranker is the hills model. Beauty is a landscape with several hills, one
+per look: each hill has a peak (the ideal face of that look) and a height,
+and a face scores by how close it sits to a peak, so going past the peak
+(towards caricature) scores lower again:
+
+    z      = P e                                 project to a small "taste space"
+    t_k(e) = h_k - |z - q_k|^2 / 2               height on hill k
+    s(e)   = log sum_k exp t_k(e)                ~ height on the hill it's on
+
+Peaks q_k start at the k-means look centres and are then learned from picks.
+Three simpler heads are fitted on the same picks only as comparisons in the
+held-out report:
 
     A  linear:          s(e) = w . e
-    B  look-centred:    s(e) = w . (e - centroid[look(e)])   (looks = k-means)
+    B  look-centred:    s(e) = w . (e - centroid[look(e)])
     C  mlp:             s(e) = v . tanh(W e + b)
 
-Every retrain fits all three and keeps the best held-out agreement. With only
-a few hundred picks that is usually the straight arrow A; the curved C can
-win later, once there are enough picks to show "better up to a point, then
-worse". `band_check` shows whether that curve is there at all.
-
-A and B also give a Laplace posterior over w, so every applicant gets a score
-and a score std; the pair sampler uses that std to find informative pairs.
+Each face's score std (for choosing informative pairs) comes from a small
+bootstrap ensemble of hills models.
 """
 
 from __future__ import annotations
@@ -146,6 +154,81 @@ class MLPHead:
         return self._forward(emb)[0]
 
 
+class HillsHead:
+    """The ranker: one learned peak per look, score = height on the hills."""
+
+    name = "D_hills"
+
+    def __init__(self, looks: Looks, rank: int = 16, l2: float = 1e-3, steps: int = 500, lr: float = 2e-2, seed: int = 0):
+        self.looks, self.rank, self.l2, self.steps, self.lr, self.seed = looks, rank, l2, steps, lr, seed
+
+    def _init(self, emb: np.ndarray):
+        # Taste space starts as the top principal directions, scaled to unit
+        # spread; peaks start at the look centres. Picks then move both.
+        mu = emb.mean(0)
+        _, sv, vt = np.linalg.svd(emb - mu, full_matrices=False)
+        r = min(self.rank, vt.shape[0])
+        self.mu = mu
+        self.P = vt[:r] / (sv[:r, None] / np.sqrt(len(emb)) + 1e-8)
+        self.q = (self.looks.centroids - mu) @ self.P.T
+        self.h = np.zeros(len(self.q))
+
+    def _terms(self, e: np.ndarray):
+        z = (e - self.mu) @ self.P.T
+        diff = z[:, None, :] - self.q[None]  # n x K x r
+        t = self.h[None] - 0.5 * (diff**2).sum(-1)
+        tmax = t.max(1, keepdims=True)
+        w = np.exp(t - tmax)
+        s = np.log(w.sum(1)) + tmax[:, 0]
+        return s, w / w.sum(1, keepdims=True), diff
+
+    def fit(self, emb: np.ndarray, winners: np.ndarray, losers: np.ndarray):
+        self._init(emb)
+        params = [self.P, self.q, self.h]
+        m = [np.zeros_like(p) for p in params]
+        v = [np.zeros_like(p) for p in params]
+        ea, eb = emb[winners] - self.mu, emb[losers] - self.mu
+        n = max(len(winners), 1)
+        for t in range(1, self.steps + 1):
+            sa, pa, da = self._terms(emb[winners])
+            sb, pb, db = self._terms(emb[losers])
+            g = -(1 - sigmoid(sa - sb)) / n  # dL/d(sa - sb)
+            # ds/dh_k = pi_k ; ds/dq_k = pi_k (z - q_k) ; ds/dz = -sum_k pi_k (z - q_k)
+            ga, gb = g[:, None], -g[:, None]
+            dz_a = -(pa[..., None] * da).sum(1) * ga
+            dz_b = -(pb[..., None] * db).sum(1) * gb
+            grads = [
+                dz_a.T @ ea + dz_b.T @ eb + self.l2 * self.P,
+                (pa[..., None] * da * ga[..., None]).sum(0) + (pb[..., None] * db * gb[..., None]).sum(0),
+                (pa * ga).sum(0) + (pb * gb).sum(0) + self.l2 * self.h,
+            ]
+            for i, (p, gr) in enumerate(zip(params, grads)):
+                m[i] = 0.9 * m[i] + 0.1 * gr
+                v[i] = 0.999 * v[i] + 0.001 * gr**2
+                p -= self.lr * (m[i] / (1 - 0.9**t)) / (np.sqrt(v[i] / (1 - 0.999**t)) + 1e-8)
+        return self
+
+    def score(self, emb: np.ndarray) -> np.ndarray:
+        return self._terms(emb)[0]
+
+    def hill(self, emb: np.ndarray) -> np.ndarray:
+        """Which hill each face is standing on."""
+        return self._terms(emb)[1].argmax(1)
+
+
+def hills_with_std(emb, winners, losers, looks: Looks, members: int = 5, seed: int = 0):
+    """Fit the hills model on every pick, plus a bootstrap ensemble whose
+    spread is each face's score std (high = the model can't place it yet)."""
+    main = HillsHead(looks, seed=seed).fit(emb, winners, losers)
+    rng = np.random.default_rng(seed)
+    runs = []
+    for i in range(members):
+        idx = rng.integers(len(winners), size=len(winners))
+        s = HillsHead(looks, seed=seed + 1 + i).fit(emb, winners[idx], losers[idx]).score(emb)
+        runs.append(s - s.mean())  # scores are only defined up to a shift
+    return main, np.std(runs, axis=0)
+
+
 # --------------------------------------------------------------------------- evaluation
 
 
@@ -195,9 +278,10 @@ def rater_ceiling(winners: np.ndarray, losers: np.ndarray) -> tuple[float, int]:
 
 
 def compare_heads(emb, winners, losers, looks: Looks, test_frac=0.2, seed=0, l2=1.0):
-    """Fit A, B, C on the train split; report held-out and per-look agreement."""
+    """Fit the hills model and the A/B/C baselines on the train split; report
+    held-out and per-look agreement for each."""
     train, test = split_by_applicant(winners, losers, len(emb), test_frac, seed)
-    heads = [LinearHead(l2), LinearHead(l2, looks), MLPHead(seed=seed)]
+    heads = [HillsHead(looks, seed=seed), LinearHead(l2), LinearHead(l2, looks), MLPHead(seed=seed)]
     report = {}
     for h in heads:
         h.fit(emb, winners[train], losers[train])
@@ -209,16 +293,7 @@ def compare_heads(emb, winners, losers, looks: Looks, test_frac=0.2, seed=0, l2=
             "n_train": int(train.sum()),
             "n_test": int(test.sum()),
         }
-    return report, choose_head(report)
-
-
-DEFAULT_HEAD = "A_linear"  # cold start: too few picks to compare heads
-
-
-def choose_head(report: dict) -> str:
-    """Highest held-out agreement wins; ties go to the simpler head (A, B, C)."""
-    order = ["A_linear", "B_look_centred", "C_mlp"]
-    return max(order, key=lambda k: (report[k]["heldout"], -order.index(k)))
+    return report
 
 
 # --------------------------------------------------------------------------- pair selection

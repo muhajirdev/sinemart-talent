@@ -12,16 +12,21 @@ Drive photos ──► crop/align/grey/gate ──► SigLIP 2 (or DINOv3) embed
 
 - **One universal score**, not one per role (decided 2026-10-12). Per-role tweaks
   can go on top later.
-- **Frozen embeddings + a small head.** Picks train a Bradley–Terry head:
-  P(a beats b) = sigmoid(s(a) − s(b)). Every retrain fits three heads on the
-  same picks and keeps whichever has the best held-out agreement:
-  - **A:** a straight arrow, s = w·e. This is what you start with while there
-    are only a few hundred picks.
-  - **B:** the same arrow measured from each look's centre. A "look" is a
-    k-means cluster of embeddings.
-  - **C:** a small 2-layer MLP. It can learn "better up to a point, then
-    worse", and should only win once there are enough picks to show it.
-- **Pairs:** 70% uncertain (faces the model can't yet separate), 20% from the
+- **Beauty is a landscape of hills.** There is one hill per look. Each hill
+  has a peak (that look's ideal face) and a height. A face scores by how close
+  it stands to a peak, so pushing past the ideal, towards caricature, scores
+  lower again. Picks train this as a Bradley–Terry model,
+  P(a beats b) = sigmoid(s(a) − s(b)), with
+  `s(e) = log Σ_k exp(h_k − |P e − q_k|² / 2)` (`pipeline/sinemart/bt.py`,
+  `HillsHead`). The peaks start at k-means look centres and then move with
+  the picks. The hills model always does the ranking and decides which pairs
+  are worth asking.
+- **Baselines, for comparison only:** a straight arrow (A), the arrow measured
+  from each look's centre (B), and a small MLP (C). They sit next to the hills
+  model in the held-out report so you can see whether the hills earn their
+  keep.
+- **Pairs:** 70% uncertain (faces the hills model can't place yet, measured
+  by the spread of a 5-model bootstrap ensemble), 20% from the
   current top 500, 10% random. Left and right are shuffled.
 - **Measured:** held-out agreement on *unseen applicants* (the split holds out
   faces, not pairs), agreement within each look, the team's own repeat-pick
@@ -112,7 +117,8 @@ python -m sinemart.train ../data/siglip2.npz ../data/picks.csv ../data/out
 npx wrangler d1 execute sinemart-talent --remote --file ../data/out/update.sql
 ```
 
-`out/report.json` has held-out agreement for A, B and C, agreement within each
+`out/report.json` has held-out agreement for the hills model and A, B and C,
+how many faces stand on each hill, agreement within each
 look, the repeat-pick ceiling and the 10 bands. Run the same picks against
 `dinov3.npz` to choose the backbone.
 

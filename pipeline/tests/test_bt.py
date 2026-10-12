@@ -44,13 +44,12 @@ def test_linear_head_recovers_true_order():
 def test_all_three_heads_beat_chance_on_unseen_faces():
     emb, w, l, _ = synthetic()
     looks = Looks.fit(emb, k=6)
-    report, best = compare_heads(emb, w, l, looks)
-    assert set(report) == {"A_linear", "B_look_centred", "C_mlp"}
+    report = compare_heads(emb, w, l, looks)
+    assert set(report) == {"D_hills", "A_linear", "B_look_centred", "C_mlp"}
     for r in report.values():
         assert r["heldout"] > 0.65, r
         assert r["n_test"] > 0 and r["n_train"] > 0
         assert "cross_look" in r["per_look"]
-    assert best in report
 
 
 def test_mlp_head_learns_nonlinear_taste():
@@ -118,12 +117,41 @@ def test_band_check_shows_peak_for_inverted_u():
     assert rows[9]["win_rate"] < rows[peak - 1]["win_rate"] - 0.05
 
 
-def test_head_choice_is_best_heldout_with_ties_to_simpler():
-    from sinemart.bt import choose_head
+def test_hills_find_separate_peaks_per_look():
+    from sinemart.bt import HillsHead, LinearHead
 
-    r = lambda x: {"heldout": x}  # noqa: E731
-    assert choose_head({"A_linear": r(0.70), "B_look_centred": r(0.70), "C_mlp": r(0.71)}) == "C_mlp"
-    assert choose_head({"A_linear": r(0.70), "B_look_centred": r(0.70), "C_mlp": r(0.70)}) == "A_linear"
+    # Three looks, each with its own ideal face; going past the ideal is worse.
+    rng = np.random.default_rng(0)
+    centres = rng.normal(0, 1, (3, 12)) * 3
+    look = rng.integers(3, size=900)
+    emb = centres[look] + rng.normal(0, 1, (900, 12))
+    peaks = centres + rng.normal(0, 0.7, (3, 12))
+    true = -((emb - peaks[look]) ** 2).sum(1)
+    a, b = rng.integers(900, size=(2, 8000))
+    keep = a != b
+    a, b = a[keep], b[keep]
+    w, l = np.where(true[a] > true[b], a, b), np.where(true[a] > true[b], b, a)
+    looks = Looks.fit(emb, k=3)
+
+    hills = HillsHead(looks, rank=12).fit(emb, w, l)
+    s = hills.score(emb)
+    lin = LinearHead().fit(emb, w, l).score(emb)
+    assert agreement(s, w, l) > agreement(lin, w, l) + 0.05
+    # Within each look the hills order matches the truth (a straight arrow can't).
+    for k in range(3):
+        m = look == k
+        assert np.corrcoef(s[m], true[m])[0, 1] > 0.7
+    # Each look ends up on its own hill.
+    assert len(set(hills.hill(emb).tolist())) == 3
+
+
+def test_hills_ensemble_std_is_positive():
+    from sinemart.bt import hills_with_std
+
+    emb, w, l, _ = synthetic(n=200, n_pairs=800)
+    main, std = hills_with_std(emb, w, l, Looks.fit(emb, k=4), members=3)
+    assert std.shape == (200,) and (std > 0).all()
+    assert main.score(emb).shape == (200,)
 
 
 def test_train_cli_end_to_end(tmp_path):
@@ -140,11 +168,12 @@ def test_train_cli_end_to_end(tmp_path):
         wr.writerow(["winner_id", "loser_id"])
         wr.writerows(zip(ids[w], ids[l]))
     report = run(tmp_path / "e.npz", tmp_path / "picks.csv", tmp_path / "out", n_pairs=100, looks_k=4)
-    assert report["best"] in ("A_linear", "B_look_centred", "C_mlp")
+    assert report["ranker"] == "D_hills"
+    assert set(report["heads"]) == {"D_hills", "A_linear", "B_look_centred", "C_mlp"}
     assert len(report["bands"]) == 10
     assert json.loads((tmp_path / "out/report.json").read_text())["n_picks"] == len(w)
     sql = (tmp_path / "out/update.sql").read_text()
     assert sql.count("INSERT INTO pair_queue") == 100 and sql.count("UPDATE applicants") == 300
     # Cold start: no picks at all still produces a queue.
     (tmp_path / "none.csv").write_text("winner_id,loser_id\n")
-    assert run(tmp_path / "e.npz", tmp_path / "none.csv", tmp_path / "cold", n_pairs=10)["best"] == "A_linear"
+    assert "heads" not in run(tmp_path / "e.npz", tmp_path / "none.csv", tmp_path / "cold", n_pairs=10)
