@@ -144,6 +144,17 @@ how many faces stand on each hill, agreement within each
 look, the repeat-pick ceiling and the 10 bands. Run the same picks against
 `dinov3.npz` to choose the backbone.
 
+### 5. Model 2 (a second embedding to compare on the scores page)
+
+```bash
+python -m sinemart.embed ../data/crops dinov2 ../data/dinov2.npz   # dinov3 once the licence is accepted (HF_TOKEN)
+python -m sinemart.alt m2 ../data/dinov2.npz ../data/gender.csv ../data/out/alt_m2.sql
+npx wrangler d1 execute sinemart-talent --remote --file ../data/out/alt_m2.sql
+```
+
+Every retrain also fits Model 2 on the same picks and split; the scores page
+can switch to it. Battles always use Model 1.
+
 ## Tests
 
 ```bash

@@ -26,6 +26,8 @@ MODELS = {
     "siglip2": "google/siglip2-base-patch16-224",
     # Gated on Hugging Face: accept the licence on the model page first.
     "dinov3": "facebook/dinov3-vitb16-pretrain-lvd1689m",
+    # Open stand-in for DINOv3 until its licence is accepted.
+    "dinov2": "facebook/dinov2-base",
 }
 
 

@@ -71,7 +71,7 @@
   <button data-g="f" aria-pressed="true">Cewek</button><button data-g="m" aria-pressed="false">Cowok</button>
 </div>
 <div class="chips" id="msw" hidden>
-  <button data-m="hills" aria-pressed="true">Many hills</button><button data-m="one" aria-pressed="false">One hill</button>
+
 </div>
 <div class="switch" id="switch" hidden>
   <label for="who">Taste of</label>
@@ -126,11 +126,12 @@
     }
     $("model").innerHTML = `
       <div class="stats">
-        <div class="stat"><b>${!trained ? "Not trained" : m.mode === "one" ? "One hill" : "Many hills"}</b><span>${m.mode === "one" ? "shown here (battles still use many hills)" : "shown here, and picks the battles"} · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} hills` : `${m.hills || 0} hills (looks)`}</span></div>
+        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "hills" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, many hills)"} · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} hills` : `${m.hills || 0} hills (looks)`}</span></div>
         <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.total - p.decided} skipped)</span></div>
         <div class="stat"><b>${pct(m.heldout_hills)}</b><span>many hills: held-out agreement</span></div>
         <div class="stat"><b>${pct(m.heldout_one)}</b><span>one hill per group, same test</span></div>
         <div class="stat"><b>${pct(m.heldout_line)}</b><span>straight arrow, same test</span></div>
+        ${(m.alternates || []).map((a, i) => `<div class="stat"><b>${pct(a.heldout)}</b><span>Model ${i + 2} (many hills), same test</span></div>`).join("")}
       </div>
       <p class="note">${trained
         ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
@@ -167,6 +168,9 @@
   const hc = (k) => `h${(local(k) % 8) + 1}c`; // fixed palette order; labels carry identity past 8
   const hn = (k) => `Hill ${local(k) + 1}`;
   const gname = { f: "Cewek", m: "Cowok" };
+  const modeName = (mode, alts) => mode === "one" ? "Model 1 · one hill"
+    : !mode || mode === "hills" ? "Model 1 · many hills"
+    : `Model ${(alts || []).findIndex((a) => a.key === mode) + 2}`;
   const battles = (f) => (f.games ? `Won ${f.wins} of ${f.games} battle${f.games === 1 ? "" : "s"}` : "No battles yet");
   // How settled the score is: the spread between retrains on resampled picks.
   const certainty = (f) => {
@@ -373,13 +377,14 @@
 
   async function load() {
     const q = state.rater ? `?rater=${encodeURIComponent(state.rater)}` : "";
-    const mq = !state.rater && state.mode === "one" ? `${q ? "&" : "?"}mode=one` : "";
+    const mq = !state.rater && state.mode !== "hills" ? `${q ? "&" : "?"}mode=${encodeURIComponent(state.mode)}` : "";
     const g = `${q || mq ? "&" : "?"}gender=${state.gender}`;
     $("msw").hidden = !!state.rater;
     const [r, mr, ar] = await Promise.all([api("/api/results" + q + mq), api("/api/map" + q + mq + g), api("/api/raters")]);
     if (r.status === 401) { $("msg").innerHTML = '<a href="/">Sign in on the picking page first</a>.'; return; }
     const data = await r.json();
     state.pg = data.model?.peak_gender || [];
+    if (!state.rater) renderModes(data.model?.alternates);
     // One group at a time: scores only compare within cewek or within cowok.
     const grouped = data.faces.some((f) => f.gender);
     $("gsw").hidden = !grouped;
@@ -390,11 +395,17 @@
     renderMap();
     if (ar.ok) renderAgree(await ar.json());
   }
-  $("msw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
-    state.mode = b.dataset.m; state.filter = "all";
-    $("msw").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-    load();
-  }));
+  // Which model ranks the page: Model 1 with many hills (the one battles
+  // use), Model 1 with one hill per group, or Model 2+ (another embedding).
+  function renderModes(alts) {
+    const modes = [["hills", "Model 1 · many hills"], ["one", "Model 1 · one hill"],
+      ...(alts || []).map((a, i) => [a.key, `Model ${i + 2}`])];
+    $("msw").innerHTML = modes.map(([v, l]) => `<button data-m="${v}" aria-pressed="${state.mode === v}">${l}</button>`).join("");
+    $("msw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
+      state.mode = b.dataset.m; state.filter = "all";
+      load();
+    }));
+  }
   $("gsw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
     state.gender = b.dataset.g; state.filter = "all"; Object.assign(state.view, { x: 0, y: 0, w: 100 });
     $("gsw").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));

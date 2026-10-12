@@ -39,17 +39,23 @@ function height(p: number[], q: number[][]) {
   return m + Math.log(t.reduce((s, x) => s + Math.exp(x - m), 0));
 }
 
-// `own` swaps in one rater's personal model (its params and per-face
-// score/hill) in place of the team's.
+// `own` swaps in another model (a rater's own, one hill, or Model 2): its
+// params and per-face score/hill, and for Model 2 its own taste space
+// (`zs`, `init`).
 export async function territory(
   env: Env,
-  own?: { params: string | null; faces: Map<number, { score: number | null; hill: number | null }> },
+  own?: {
+    params: string | null;
+    faces: Map<number, { score: number | null; hill: number | null }>;
+    zs?: Map<number, number[]>;
+    init?: { peaks: number[][]; peak_gender?: string[] };
+  },
   gender: string | null = null, // only this group's faces and hills
   gridN = 64,
 ) {
   const model = await env.DB.prepare("SELECT init, params FROM model WHERE id = 1").first<{ init: string; params: string | null }>();
   if (!model?.init) return { faces: [], peaks: [], grid: null };
-  const init = JSON.parse(model.init) as { peaks: number[][]; peak_gender?: string[] };
+  const init = own?.init ?? (JSON.parse(model.init) as { peaks: number[][]; peak_gender?: string[] });
   const peaks0 = init.peaks;
   let pg: (string | null)[] = peaks0.map((_, k) => init.peak_gender?.[k] ?? null);
   const r = peaks0[0].length;
@@ -71,6 +77,9 @@ export async function territory(
   const ks = q.map((_, k) => k).filter((k) => keep[k]);
   if (ks.length) q = ks.map((k) => q[k]);
   else ks.push(...q.map((_, k) => k));
+  if (own?.zs) {
+    for (const f of results) f.z = JSON.stringify(own.zs.get(f.id) ?? []);
+  }
   if (own) {
     for (const f of results) {
       const o = own.faces.get(f.id);

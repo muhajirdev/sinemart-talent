@@ -85,6 +85,46 @@ export function oneHill(Z: number[][], G: (string | null)[]) {
   return new Hills(peaks, groups);
 }
 
+// Comparison models on a second embedding ("Model 2"): same people, same
+// picks and the same held-out split, each in its own taste space. They only
+// feed the scores page; battles keep using the main model.
+export async function loadAlternate(env: Env, key: string) {
+  const row = await env.DB.prepare("SELECT init, params FROM alt_models WHERE key = ?1")
+    .bind(key).first<{ init: string; params: string | null }>();
+  if (!row) return null;
+  const zs = new Map(
+    (await env.DB.prepare("SELECT applicant_id AS id, z FROM alt_z WHERE key = ?1").bind(key).all<{ id: number; z: string }>())
+      .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
+  );
+  const init = JSON.parse(row.init) as { peaks: number[][]; peak_gender?: string[] };
+  return { init, params: row.params, zs };
+}
+
+async function fitAlternates(
+  env: Env, faces: { id: number }[], G: (string | null)[], picks: Pick[], train: Pick[], test: Pick[],
+) {
+  const keys = (await env.DB.prepare("SELECT key FROM alt_models ORDER BY key").all<{ key: string }>()).results;
+  const stmts: D1PreparedStatement[] = [];
+  for (const { key } of keys) {
+    const alt = await loadAlternate(env, key);
+    if (!alt || faces.some((f) => !alt.zs.has(f.id))) continue; // must cover everyone
+    const Z = faces.map((f) => alt.zs.get(f.id)!);
+    const fresh = () => new Hills(alt.init.peaks, alt.init.peak_gender ?? []);
+    let heldout: number | null = null;
+    if (train.length >= MIN_PICKS && test.length >= 3) {
+      const h = fresh().fit(Z, train, G);
+      heldout = agreement(Z.map((z, i) => h.score(z, G[i])), test);
+    }
+    const main = fresh().fit(Z, picks, G);
+    stmts.push(
+      env.DB.prepare(
+        "UPDATE alt_models SET params = ?1, heldout = ?2, n_picks = ?3, trained_at = datetime('now') WHERE key = ?4",
+      ).bind(JSON.stringify(main), heldout, picks.length, key),
+    );
+  }
+  return stmts;
+}
+
 export async function retrain(env: Env) {
   const data = await loadData(env);
   if (!data) return { status: "no taste space loaded yet" };
@@ -152,6 +192,7 @@ export async function retrain(env: Env) {
        split_by = ?5, n_picks = ?6, trained_at = ?7, params_one = ?8, heldout_one = ?9 WHERE id = 1`,
     ).bind(JSON.stringify(main), heldoutHills, heldoutLine, test.length, by, picks.length, now, JSON.stringify(one), heldoutOne),
   );
+  stmts.push(...(await fitAlternates(env, faces, G, picks, train, test)));
   await runBatches(env.DB, stmts);
   return {
     status: "trained", picks: picks.length, heldout_hills: heldoutHills, heldout_one: heldoutOne,

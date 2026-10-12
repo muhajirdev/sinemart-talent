@@ -89,3 +89,21 @@ CREATE TABLE IF NOT EXISTS model (
   n_picks       INTEGER NOT NULL DEFAULT 0,  -- picks the current scores learned from
   trained_at    TEXT
 );
+
+-- Comparison models on another embedding ("Model 2" on the scores page).
+-- Same people and picks as the main model, each in its own taste space
+-- (alt_z, from pipeline sinemart.alt). Battles always use the main model.
+CREATE TABLE IF NOT EXISTS alt_models (
+  key        TEXT PRIMARY KEY,
+  init       TEXT NOT NULL,
+  params     TEXT,
+  heldout    REAL,
+  n_picks    INTEGER NOT NULL DEFAULT 0,
+  trained_at TEXT
+);
+CREATE TABLE IF NOT EXISTS alt_z (
+  key          TEXT NOT NULL,
+  applicant_id INTEGER NOT NULL,
+  z            TEXT NOT NULL,
+  PRIMARY KEY (key, applicant_id)
+);

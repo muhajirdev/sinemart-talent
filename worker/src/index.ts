@@ -3,7 +3,7 @@
 // Static UI lives in ../public; everything under /api and /img lands here.
 
 import { territory } from "./map";
-import { ANSWERED, MIN_PICKS, RETRAIN_EVERY, hillsFrom, raterAgreement, raterModel, retrain } from "./retrain";
+import { ANSWERED, MIN_PICKS, RETRAIN_EVERY, hillsFrom, loadAlternate, raterAgreement, raterModel, retrain } from "./retrain";
 
 export interface Env {
   DB: D1Database;
@@ -147,6 +147,7 @@ async function results(env: Env, who: string | null, mode: string | null = null)
      FROM model WHERE id = 1`,
   ).first<Record<string, unknown>>();
   const oneParams = model?.params_one as string | null;
+  const alternates = (await env.DB.prepare("SELECT key, heldout, n_picks FROM alt_models ORDER BY key").all()).results;
   if (model) delete model.params_one;
   const picks = await env.DB.prepare(
     `SELECT COUNT(*) AS decided, SUM(tie) AS ties, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters
@@ -160,6 +161,19 @@ async function results(env: Env, who: string | null, mode: string | null = null)
      FROM applicants a ORDER BY a.score DESC NULLS LAST, a.id`,
   ).all<Record<string, unknown>>();
   let peakGender: (string | null)[] | null = null;
+  if (mode && mode !== "one" && mode !== "hills") {
+    // Model 2 (another embedding), trained on the same picks.
+    const alt = await loadAlternate(env, mode);
+    const h = alt?.params ? hillsFrom(JSON.parse(alt.params)) : null;
+    peakGender = alt ? (alt.init.peak_gender ?? []) : [];
+    for (const f of faces) {
+      const z = alt?.zs.get(f.id as number), g = f.gender as string | null;
+      f.score = h && z ? h.score(z, g) : null;
+      f.look = h && z ? h.hill(z, g) : null;
+      f.score_std = null;
+    }
+    faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
+  }
   if (mode === "one") {
     // Same page, ranked by the one-hill-per-group model instead.
     const one = oneParams ? hillsFrom(JSON.parse(oneParams)) : null;
@@ -180,7 +194,7 @@ async function results(env: Env, who: string | null, mode: string | null = null)
   if (model) delete model.init;
   return json({
     model: {
-      ...model, mode: mode === "one" ? "one" : "hills", hills: init?.peaks?.length ?? 0,
+      ...model, mode: mode ?? "hills", hills: init?.peaks?.length ?? 0, alternates,
       peak_gender: peakGender ?? init?.peak_gender ?? [],
       retrain_every: RETRAIN_EVERY,
     },
@@ -285,12 +299,16 @@ export default {
     if (url.pathname === "/api/results" && req.method === "GET") return results(env, only, mode);
     if (url.pathname === "/api/map" && req.method === "GET") {
       const gender = url.searchParams.get("gender");
-      if (!only && mode === "one") {
-        const m = await env.DB.prepare("SELECT params_one FROM model WHERE id = 1").first<{ params_one: string | null }>();
-        const r = (await (await results(env, null, "one")).json()) as { faces: { id: number; score: number | null; look: number | null }[] };
-        return json(await territory(env, {
-          params: m?.params_one ?? null, faces: new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }])),
-        }, gender));
+      if (!only && mode && mode !== "hills") {
+        const r = (await (await results(env, null, mode)).json()) as { faces: { id: number; score: number | null; look: number | null }[] };
+        const faces = new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }]));
+        if (mode === "one") {
+          const m = await env.DB.prepare("SELECT params_one FROM model WHERE id = 1").first<{ params_one: string | null }>();
+          return json(await territory(env, { params: m?.params_one ?? null, faces }, gender));
+        }
+        const alt = await loadAlternate(env, mode);
+        if (!alt) return json({ faces: [], peaks: [], grid: null });
+        return json(await territory(env, { params: alt.params, faces, zs: alt.zs, init: alt.init }, gender));
       }
       if (!only) return json(await territory(env, undefined, gender));
       const r = (await (await raterResults(env, only)).json()) as {
