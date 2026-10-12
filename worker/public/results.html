@@ -127,7 +127,7 @@
     $("model").innerHTML = `
       <div class="stats">
         <div class="stat"><b>${!trained ? "Not trained" : m.mode === "one" ? "One hill" : "Many hills"}</b><span>${m.mode === "one" ? "shown here (battles still use many hills)" : "shown here, and picks the battles"} · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} hills` : `${m.hills || 0} hills (looks)`}</span></div>
-        <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.total - p.decided} skipped)</span></div>
+        <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.total - p.decided} skipped)</span></div>
         <div class="stat"><b>${pct(m.heldout_hills)}</b><span>many hills: held-out agreement</span></div>
         <div class="stat"><b>${pct(m.heldout_one)}</b><span>one hill per group, same test</span></div>
         <div class="stat"><b>${pct(m.heldout_line)}</b><span>straight arrow, same test</span></div>

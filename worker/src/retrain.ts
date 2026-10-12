@@ -7,6 +7,8 @@ import { Arrow, Hills, Pick, agreement, groupedPairs, rng, split } from "./hills
 
 export const RETRAIN_EVERY = 10;
 export const MIN_PICKS = 5;
+// A pick that tells the model something: a winner, or "Sama saja" (tie). Skips don't.
+export const ANSWERED = "(winner_id IS NOT NULL OR tie = 1)";
 
 type Env = { DB: D1Database };
 export type Params = { A: number[]; q: number[]; r: number; K: number; pg?: (string | null)[] };
@@ -31,16 +33,17 @@ export async function loadData(env: Env, rater: string | null = null) {
   const G = faces.map((f) => f.gender);
   const rows = (
     await env.DB.prepare(
-      `SELECT rater, winner_id, CASE WHEN winner_id = left_id THEN right_id ELSE left_id END AS loser_id
-       FROM picks WHERE winner_id IS NOT NULL AND (?1 IS NULL OR rater = ?1) ORDER BY id`,
+      `SELECT rater, tie, COALESCE(winner_id, left_id) AS winner_id,
+         CASE WHEN winner_id = right_id THEN left_id ELSE right_id END AS loser_id
+       FROM picks WHERE ${ANSWERED} AND (?1 IS NULL OR rater = ?1) ORDER BY id`,
     )
       .bind(rater)
-      .all<{ rater: string; winner_id: number; loser_id: number }>()
+      .all<{ rater: string; tie: number; winner_id: number; loser_id: number }>()
   ).results.filter((r) => index.has(r.winner_id) && index.has(r.loser_id))
     // A battle that crossed groups (before a gender fix) says nothing within one.
     .filter((r) => G[index.get(r.winner_id)!] === G[index.get(r.loser_id)!]);
   const picks: (Pick & { rater: string })[] = rows.map((r) => ({
-    w: index.get(r.winner_id)!, l: index.get(r.loser_id)!, rater: r.rater,
+    w: index.get(r.winner_id)!, l: index.get(r.loser_id)!, y: r.tie ? 0.5 : 1, rater: r.rater,
   }));
   return { peaks, peakGroup, faces, index, Z, G, picks };
 }
@@ -189,9 +192,10 @@ export async function raterAgreement(env: Env) {
   const same_pair = [];
   for (let i = 0; i < names.length; i++) {
     for (let j = i + 1; j < names.length; j++) {
-      const mine = new Map(byRater.get(names[i])!.map((p) => [key(p), p.w]));
+      const decisive = (n: string) => byRater.get(n)!.filter((p) => p.y === 1);
+      const mine = new Map(decisive(names[i]).map((p) => [key(p), p.w]));
       let n = 0, match = 0;
-      for (const p of byRater.get(names[j])!) {
+      for (const p of decisive(names[j])) {
         const w = mine.get(key(p));
         if (w === undefined) continue;
         n++;

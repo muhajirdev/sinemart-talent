@@ -15,6 +15,7 @@
   body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
   header { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 0 8px; }
   header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  header .hint { color: var(--muted); font-size: 13px; margin-top: 2px; }
   header span { color: var(--muted); font-size: 14px; }
   header a { color: var(--accent); font-size: 14px; text-decoration: none; white-space: nowrap; }
   #pair { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 0; }
@@ -36,7 +37,8 @@
   .pick kbd { font: 600 12px system-ui; opacity: .6; margin-left: 6px; }
   .pick:disabled { opacity: .45; }
   .card.chosen .photo { outline: 4px solid var(--accent); outline-offset: -4px; }
-  #toast { position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  /* Top of the screen, so it never covers a Pilih button. */
+  #toast { position: fixed; left: 50%; top: calc(10px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 5;
     background: #f2f2f2; color: #111; border-radius: 999px; padding: 10px 8px 10px 18px; font-size: 15px;
     display: flex; gap: 12px; align-items: center; box-shadow: 0 4px 16px #0008; white-space: nowrap; }
   #toast button { border: 0; background: #111; color: #fff; border-radius: 999px; padding: 6px 14px; font-weight: 600; font-size: 14px; cursor: pointer; }
@@ -58,7 +60,7 @@
 </head>
 <body>
 <header>
-  <h1>Mana yang lebih menarik?</h1>
+  <div><h1>Mana yang lebih menarik?</h1><div class="hint">Ragu? Pilih yang pertama terasa lebih menarik.</div></div>
   <a id="count" href="/results.html"></a>
 </header>
 <div id="who" class="hide"></div>
@@ -85,9 +87,10 @@
 </main>
 <footer id="bar" class="hide">
   <button id="undo" disabled>↶ Batalkan</button>
-  <button id="skip">Lewati</button>
+  <button id="tie" title="Keduanya kurang lebih sama menarik">Sama saja</button>
+  <button id="skip" title="Tidak bisa menilai: foto jelek, atau kamu kenal orangnya">Lewati</button>
 </footer>
-<div class="keys hide" id="keys">← → ganti foto · 1 / 2 pilih · S lewati · U batalkan</div>
+<div class="keys hide" id="keys">← → ganti foto · 1 / 2 pilih · = sama saja · S lewati · U batalkan</div>
 <div id="toast" class="hide" role="status"><span id="toastText"></span><button id="toastUndo">Batalkan</button></div>
 <script>
 (() => {
@@ -198,18 +201,19 @@
 
   async function pick(side) {
     if (busy || !current) return;
-    if (side !== "skip" && performance.now() - shownAt < 450) return;
+    if (side !== "skip" && side !== "tie" && performance.now() - shownAt < 450) return;
     busy = true;
     const winner = side === "left" ? current.left_id : side === "right" ? current.right_id : null;
-    if (side !== "skip") $(side).classList.add("chosen");
+    const tie = side === "tie";
+    if (side === "left" || side === "right") $(side).classList.add("chosen");
     const body = { queue_id: current.queue_id, left_id: current.left_id, right_id: current.right_id,
-      winner_id: winner, ms: performance.now() - shownAt };
+      winner_id: winner, tie, ms: performance.now() - shownAt };
     try {
       const r = await api("/api/pick", { method: "POST", body: JSON.stringify(body) });
       if (!r.ok) throw new Error();
-      if (winner !== null) picks++;
+      if (winner !== null || tie) picks++;
       canUndo = true; $("undo").disabled = false;
-      toast(side === "skip" ? "Dilewati" : "Pilihan tersimpan");
+      toast(side === "skip" ? "Dilewati" : tie ? "Sama saja, tersimpan" : "Pilihan tersimpan");
       const p = (await next) || (await fetchPair());
       render(p);
     } catch (e) {
@@ -255,6 +259,7 @@
 
   document.querySelectorAll(".pick").forEach((b) => (b.onclick = () => pick(b.dataset.side)));
   $("skip").onclick = () => pick("skip");
+  $("tie").onclick = () => pick("tie");
   $("undo").onclick = undo;
   $("toastUndo").onclick = undo;
   addEventListener("keydown", (e) => {
@@ -264,6 +269,7 @@
     else if (k === "1") pick("left");
     else if (k === "2") pick("right");
     else if (k === "s" || k === " ") { e.preventDefault(); pick("skip"); }
+    else if (k === "=" || k === "t") pick("tie");
     else if (k === "u" || k === "backspace") { e.preventDefault(); undo(); }
   });
   token ? start() : signIn();

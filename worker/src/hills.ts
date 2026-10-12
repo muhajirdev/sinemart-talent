@@ -13,7 +13,9 @@
 // A pick "a beat b" means P = sigmoid(score(a) - score(b)). A straight arrow
 // (score = w . z) is fitted on the same picks only to compare against.
 
-export type Pick = { w: number; l: number }; // indices into Z
+// Indices into Z. y = how much w beat l: 1 for a pick, 0.5 for "Sama saja"
+// (a tie: half a win each way, so it pulls the two scores together).
+export type Pick = { w: number; l: number; y?: number };
 
 const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
 
@@ -113,8 +115,8 @@ export class Hills {
       const fw: ReturnType<Hills["forward"]>[] = [];
       for (const i of used) fw[i] = this.forward(Z[i], G[i]); // only faces that were judged
       const gA = new Float64Array(r * r), gQ = new Float64Array(K * r);
-      for (const { w, l } of picks) {
-        const g = -(1 - sigmoid(fw[w].score - fw[l].score)) / n; // dL/d(s_w - s_l)
+      for (const { w, l, y = 1 } of picks) {
+        const g = -(y - sigmoid(fw[w].score - fw[l].score)) / n; // dL/d(s_w - s_l), cross-entropy against y
         for (const [idx, sign] of [[w, 1], [l, -1]] as const) {
           const { pi, diff } = fw[idx];
           const gs = g * sign;
@@ -157,8 +159,8 @@ export class Arrow {
     const n = Math.max(picks.length, 1);
     for (let it = 0; it < steps; it++) {
       const g = new Float64Array(this.w.length);
-      for (const { w, l } of picks) {
-        const c = -(1 - sigmoid(this.score(Z[w]) - this.score(Z[l]))) / n;
+      for (const { w, l, y = 1 } of picks) {
+        const c = -(y - sigmoid(this.score(Z[w]) - this.score(Z[l]))) / n;
         for (let i = 0; i < g.length; i++) g[i] += c * (Z[w][i] - Z[l][i]);
       }
       for (let i = 0; i < g.length; i++) g[i] += l2 * this.w[i];
@@ -168,9 +170,11 @@ export class Arrow {
   }
 }
 
+// Share of decisive picks the scores get right (ties say nothing about order).
 export function agreement(scores: number[], picks: Pick[]): number | null {
-  if (!picks.length) return null;
-  return picks.filter((p) => scores[p.w] > scores[p.l]).length / picks.length;
+  const decisive = picks.filter((p) => (p.y ?? 1) === 1);
+  if (!decisive.length) return null;
+  return decisive.filter((p) => scores[p.w] > scores[p.l]).length / decisive.length;
 }
 
 // Hold out applicants once there are enough of them (the real job is scoring

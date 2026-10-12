@@ -3,7 +3,7 @@
 // Static UI lives in ../public; everything under /api and /img lands here.
 
 import { territory } from "./map";
-import { MIN_PICKS, RETRAIN_EVERY, hillsFrom, raterAgreement, raterModel, retrain } from "./retrain";
+import { ANSWERED, MIN_PICKS, RETRAIN_EVERY, hillsFrom, raterAgreement, raterModel, retrain } from "./retrain";
 
 export interface Env {
   DB: D1Database;
@@ -85,9 +85,11 @@ async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionCont
     left_id: number;
     right_id: number;
     winner_id: number | null;
+    tie?: boolean; // "Sama saja": both about equal
     ms?: number;
   };
   const { queue_id, left_id, right_id, winner_id } = body;
+  const tie = body.tie === true && winner_id === null ? 1 : 0;
   if (!Number.isInteger(left_id) || !Number.isInteger(right_id) || left_id === right_id) {
     return json({ error: "bad pair" }, 400);
   }
@@ -105,14 +107,14 @@ async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionCont
   const ms = Number.isFinite(body.ms) ? Math.round(body.ms!) : null;
   const stmts = [
     env.DB.prepare(
-      "INSERT INTO picks (rater, left_id, right_id, winner_id, kind, ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    ).bind(who.name, left_id, right_id, winner_id, kind, ms),
+      "INSERT INTO picks (rater, left_id, right_id, winner_id, tie, kind, ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    ).bind(who.name, left_id, right_id, winner_id, tie, kind, ms),
   ];
   if (queue_id !== null) {
     stmts.push(env.DB.prepare("UPDATE pair_queue SET done_at = datetime('now') WHERE id = ?1").bind(queue_id));
   }
   await env.DB.batch(stmts);
-  if (winner_id !== null) ctx.waitUntil(maybeRetrain(env));
+  if (winner_id !== null || tie) ctx.waitUntil(maybeRetrain(env));
   return json({ ok: true });
 }
 
@@ -120,18 +122,18 @@ async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionCont
 // same pair again. Skips can be taken back too.
 async function undoPick(env: Env, who: Rater) {
   const last = await env.DB.prepare(
-    `SELECT id, left_id, right_id, winner_id FROM picks
+    `SELECT id, left_id, right_id, winner_id, tie FROM picks
      WHERE rater = ?1 AND created_at > datetime('now', '-30 minutes') ORDER BY id DESC LIMIT 1`,
-  ).bind(who.name).first<{ id: number; left_id: number; right_id: number; winner_id: number | null }>();
+  ).bind(who.name).first<{ id: number; left_id: number; right_id: number; winner_id: number | null; tie: number }>();
   if (!last) return json({ error: "nothing to undo" }, 404);
   await env.DB.prepare("DELETE FROM picks WHERE id = ?1").bind(last.id).run();
   const pair = await withPhotos(env, { queue_id: null, left_id: last.left_id, right_id: last.right_id });
-  return json({ ...pair, was_pick: last.winner_id !== null });
+  return json({ ...pair, was_pick: last.winner_id !== null || last.tie === 1 });
 }
 
 async function maybeRetrain(env: Env) {
   const row = await env.DB.prepare(
-    `SELECT (SELECT COUNT(*) FROM picks WHERE winner_id IS NOT NULL) AS picks,
+    `SELECT (SELECT COUNT(*) FROM picks WHERE ${ANSWERED}) AS picks,
             (SELECT n_picks FROM model WHERE id = 1) AS trained`,
   ).first<{ picks: number; trained: number | null }>();
   if (row && row.trained !== null && row.picks - row.trained >= RETRAIN_EVERY) await retrain(env);
@@ -147,12 +149,13 @@ async function results(env: Env, who: string | null, mode: string | null = null)
   const oneParams = model?.params_one as string | null;
   if (model) delete model.params_one;
   const picks = await env.DB.prepare(
-    "SELECT COUNT(*) AS decided, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters FROM picks WHERE winner_id IS NOT NULL",
+    `SELECT COUNT(*) AS decided, SUM(tie) AS ties, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters
+     FROM picks WHERE ${ANSWERED}`,
   ).first<{ decided: number; total: number; raters: number }>();
   const { results: faces } = await env.DB.prepare(
     `SELECT a.id, a.score, a.score_std, a.look, a.gender, a.gender_src,
        (SELECT COUNT(*) FROM picks p WHERE p.winner_id = a.id) AS wins,
-       (SELECT COUNT(*) FROM picks p WHERE p.winner_id IS NOT NULL AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
+       (SELECT COUNT(*) FROM picks p WHERE (p.winner_id IS NOT NULL OR p.tie = 1) AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
        (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos
      FROM applicants a ORDER BY a.score DESC NULLS LAST, a.id`,
   ).all<Record<string, unknown>>();
@@ -192,7 +195,7 @@ async function raterResults(env: Env, who: string) {
   if (!m) return json({ error: "no taste space loaded yet" }, 404);
   const { data, hills, n } = m;
   const counts = await env.DB.prepare(
-    "SELECT COUNT(winner_id) AS decided, COUNT(*) AS total FROM picks WHERE rater = ?1",
+    `SELECT SUM(${ANSWERED}) AS decided, COUNT(*) AS total FROM picks WHERE rater = ?1`,
   ).bind(who).first<{ decided: number; total: number }>();
   const photoCount = new Map(
     (await env.DB.prepare("SELECT applicant_id AS id, COUNT(*) AS n FROM photos GROUP BY applicant_id").all<{ id: number; n: number }>())
@@ -201,7 +204,7 @@ async function raterResults(env: Env, who: string) {
   const wins = new Map<number, number>(), games = new Map<number, number>();
   for (const p of data.picks) {
     const [w, l] = [data.faces[p.w].id, data.faces[p.l].id];
-    wins.set(w, (wins.get(w) ?? 0) + 1);
+    if (p.y === 1) wins.set(w, (wins.get(w) ?? 0) + 1);
     games.set(w, (games.get(w) ?? 0) + 1);
     games.set(l, (games.get(l) ?? 0) + 1);
   }
@@ -269,7 +272,7 @@ export default {
     const only = url.searchParams.get("rater"); // results/map for one rater's taste
 
     if (url.pathname === "/api/me") {
-      const mine = await env.DB.prepare("SELECT COUNT(*) AS n FROM picks WHERE rater = ?1 AND winner_id IS NOT NULL").bind(who.name).first<{ n: number }>();
+      const mine = await env.DB.prepare(`SELECT COUNT(*) AS n FROM picks WHERE rater = ?1 AND ${ANSWERED}`).bind(who.name).first<{ n: number }>();
       return json({ name: who.name, picks: mine?.n ?? 0 });
     }
     if (url.pathname === "/api/pair" && req.method === "GET") {
