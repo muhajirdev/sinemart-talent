@@ -3,8 +3,10 @@
     python -m sinemart.publish out/siglip2.npz crops/quality.csv out/
 
 Writes:
-    out/seed.sql          applicants rows for passed crops, each with its
-                          taste-space coordinates and look (D1)
+    out/seed.sql          applicants rows (one per person with a usable face),
+                          each with its taste-space coordinates and look,
+                          plus a photos row per photo the raters can flip
+                          through (D1)
     out/vectors.ndjson    full embeddings for `wrangler vectorize insert`
 
 The Worker trains the hills model live on the team's picks. It doesn't need
@@ -13,8 +15,9 @@ principal directions, the same start the Python HillsHead uses) and learns a
 map inside it plus one peak per look. seed.sql also stores that starting
 point (look centres) in the `model` table.
 
-Upload the crops themselves with rclone to R2 (see README); the Worker serves
-them from ``crops/<applicant_id>.jpg``.
+Upload CROP_DIR/*.jpg to R2 ``crops/`` and CROP_DIR/photos/*.jpg to R2
+``photos/`` (see README). Battles show a person's main face crop first
+(closeup preferred); the other photos are a swipe away.
 """
 
 from __future__ import annotations
@@ -42,27 +45,52 @@ def taste_space(emb: np.ndarray, looks_k: int = 12, rank: int = 16, seed: int = 
 def main(argv: list[str]) -> None:
     if len(argv) != 4:
         sys.exit("usage: python -m sinemart.publish EMB.npz quality.csv OUT_DIR")
+    from .manifest import PhotoRow, photo_rank
+
     data = np.load(argv[1])
     with open(argv[2]) as f:
-        quality = {int(r["applicant_id"]): r for r in csv.DictReader(f)}
-    keep = np.array([quality.get(int(a), {}).get("ok") == "1" for a in data["ids"]])
+        rows = list(csv.DictReader(f))
+    per: dict[int, list[dict]] = {}
+    for r in rows:
+        r.setdefault("file", f"{r['applicant_id']}.jpg")  # older one-photo quality.csv
+        per.setdefault(int(r["applicant_id"]), []).append(r)
+    order = lambda r: photo_rank(PhotoRow(0, r["kind"], r["file"], 0, ""))  # noqa: E731
+    for photos in per.values():
+        photos.sort(key=order)
+    # Main face = the first usable crop, closeup preferred.
+    main_crop = {a: next((r["file"] for r in p if r["ok"] == "1"), None) for a, p in per.items()}
+    quality = {a: p[0] for a, p in per.items()}
+    keep = np.array([main_crop.get(int(a)) is not None for a in data["ids"]])
     ids, emb = data["ids"][keep], data["emb"][keep].astype(np.float64)
     z, look, peaks = taste_space(emb)
     out = Path(argv[3])
     out.mkdir(parents=True, exist_ok=True)
     rnd = lambda v: [round(float(x), 5) for x in v]  # noqa: E731
+    q = lambda v: "'" + str(v).replace("'", "''") + "'"  # noqa: E731
     with open(out / "seed.sql", "w") as sql, open(out / "vectors.ndjson", "w") as vec:
+        sql.write("DELETE FROM photos;\n")
         for i, aid in enumerate(ids.tolist()):
-            stage = quality[aid]["stage"].replace("'", "''")
             sql.write(
                 "INSERT OR REPLACE INTO applicants (id, image_key, stage, look, z) VALUES "
-                f"({aid}, 'crops/{aid}.jpg', '{stage}', {int(look[i])}, '{json.dumps(rnd(z[i]))}');\n"
+                f"({aid}, {q('crops/' + main_crop[aid])}, {q(quality[aid]['stage'])}, {int(look[i])}, "
+                f"'{json.dumps(rnd(z[i]))}');\n"
             )
+            # Photos raters can flip through: the face crop first, then each whole photo.
+            n = 0
+            for r in per[aid]:
+                if r.get("view") == "1":
+                    sql.write(
+                        "INSERT INTO photos (applicant_id, n, kind, image_key, face_ok) VALUES "
+                        f"({aid}, {n}, {q(r['kind'])}, {q('photos/' + r['file'])}, {int(r['ok'] == '1')});\n"
+                    )
+                    n += 1
             vec.write(json.dumps({"id": str(aid), "values": rnd(emb[i])}) + "\n")
         init = json.dumps({"peaks": [rnd(p) for p in peaks], "model": str(data["model"])})
         sql.write(f"INSERT OR REPLACE INTO model (id, init) VALUES (1, '{init}');\n")
         sql.write("DELETE FROM rater_models;\n")  # a new taste space; personal models refit on demand
-    print(f"{len(ids)} applicants ready ({(~keep).sum()} skipped by the quality gate), {len(peaks)} looks")
+    n_photos = data["n_photos"][keep] if "n_photos" in data else np.ones(len(ids), int)
+    print(f"{len(ids)} applicants ready ({(~keep).sum()} skipped by the quality gate), {len(peaks)} looks, "
+          f"{int(n_photos.sum())} face crops averaged")
 
 
 if __name__ == "__main__":

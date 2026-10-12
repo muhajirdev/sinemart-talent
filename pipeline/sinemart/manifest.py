@@ -69,14 +69,24 @@ def build_manifest(listing: list[dict]) -> list[PhotoRow]:
     return rows
 
 
+def photo_rank(r: PhotoRow) -> tuple:
+    """Closeup first, then full-body 1, 2, ..., then anything else."""
+    return (0 if r.kind == "closeup" else 1 if r.kind.startswith("fullbody") else 2, r.kind, r.path)
+
+
+def group_photos(rows: list[PhotoRow]) -> dict[int, list[PhotoRow]]:
+    """Every photo of each applicant, closeup first. One person, many photos."""
+    out: dict[int, list[PhotoRow]] = {}
+    for r in rows:
+        out.setdefault(r.applicant_id, []).append(r)
+    for photos in out.values():
+        photos.sort(key=photo_rank)
+    return out
+
+
 def pick_headshots(rows: list[PhotoRow]) -> dict[int, PhotoRow]:
     """One headshot per applicant: the closeup, else the first full-body shot."""
-    best: dict[int, PhotoRow] = {}
-    rank = lambda r: (0 if r.kind == "closeup" else 1, r.kind, r.path)  # noqa: E731
-    for r in rows:
-        if r.applicant_id not in best or rank(r) < rank(best[r.applicant_id]):
-            best[r.applicant_id] = r
-    return best
+    return {aid: photos[0] for aid, photos in group_photos(rows).items()}
 
 
 def main(argv: list[str]) -> None:
@@ -89,9 +99,9 @@ def main(argv: list[str]) -> None:
         w.writeheader()
         for r in rows:
             w.writerow(asdict(r))
-    heads = pick_headshots(rows)
-    closeups = sum(1 for r in heads.values() if r.kind == "closeup")
-    print(f"{len(rows)} photos, {len(heads)} applicants, {closeups} with a closeup")
+    people = group_photos(rows)
+    closeups = sum(1 for p in people.values() if p[0].kind == "closeup")
+    print(f"{len(rows)} photos, {len(people)} applicants, {closeups} with a closeup")
 
 
 if __name__ == "__main__":

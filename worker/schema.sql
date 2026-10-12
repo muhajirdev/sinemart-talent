@@ -14,6 +14,18 @@ CREATE TABLE IF NOT EXISTS applicants (
 );
 CREATE INDEX IF NOT EXISTS applicants_score ON applicants (score DESC);
 
+-- Every photo of a person (closeup, full-body 1, 2, ...), in the order raters
+-- flip through them. The person's score comes from the average of all their
+-- usable face crops; applicants.image_key is the main face shown first.
+CREATE TABLE IF NOT EXISTS photos (
+  applicant_id INTEGER NOT NULL,
+  n            INTEGER NOT NULL,           -- 0 = first (closeup when there is one)
+  kind         TEXT NOT NULL,              -- closeup | fullbody1 | fullbody2 | other
+  image_key    TEXT NOT NULL,              -- R2 key of the whole photo, resized
+  face_ok      INTEGER NOT NULL,           -- 1 = its face crop counts toward the score
+  PRIMARY KEY (applicant_id, n)
+);
+
 -- Raters sign in with the team code and their name (POST /api/login), which
 -- hands back a token kept on the phone. Older per-person links (?t=<token>)
 -- still work. picks.rater holds the name, so every pick traces to a person.

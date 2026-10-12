@@ -192,18 +192,27 @@ def process(img: np.ndarray, detector: Detector, segmenter: Segmenter | None = N
     return crop, q
 
 
+VIEW_MAX = 1280  # long side of the full photo kept for viewing
+
+
 def main(argv: list[str] | None = None) -> None:
-    """Crop one headshot per applicant from a manifest.
+    """Crop every photo of every applicant from a manifest.
 
     python -m sinemart.crop manifest.csv PHOTO_ROOT CROP_DIR --yunet yunet.onnx [--seg selfie_segmenter.tflite]
-    Writes CROP_DIR/<applicant_id>.jpg for photos that pass the gate (and
-    CROP_DIR/rejected/ for the rest) plus CROP_DIR/quality.csv.
+
+    One person can have several photos (closeup, full-body 1 and 2, ...).
+    For each photo it writes:
+      CROP_DIR/<id>-<kind>.jpg         aligned grey face crop, if it passes the gate
+      CROP_DIR/rejected/<id>-<kind>.jpg  the crop if it doesn't
+      CROP_DIR/photos/<id>-<kind>.jpg  the whole photo, resized, for raters to look at
+    plus CROP_DIR/quality.csv with one row per photo. The model embeds every
+    passing face crop of a person and averages them (sinemart.embed).
     """
     import argparse
     import csv
     from pathlib import Path
 
-    from .manifest import PhotoRow, pick_headshots
+    from .manifest import PhotoRow, group_photos
 
     ap = argparse.ArgumentParser()
     ap.add_argument("manifest")
@@ -215,32 +224,44 @@ def main(argv: list[str] | None = None) -> None:
 
     with open(args.manifest) as f:
         rows = [PhotoRow(int(r["applicant_id"]), r["kind"], r["path"], int(r["size"]), r["stage"]) for r in csv.DictReader(f)]
-    heads = pick_headshots(rows)
+    people = group_photos(rows)
     out = Path(args.crop_dir)
     (out / "rejected").mkdir(parents=True, exist_ok=True)
+    (out / "photos").mkdir(parents=True, exist_ok=True)
     detector = Detector(args.yunet)
     segmenter = Segmenter(args.seg) if args.seg else None
-    fields = ["applicant_id", "kind", "stage", "ok", "reasons", "face_score", "iod_px", "sharpness", "brightness", "yaw", "bg"]
-    passed = 0
+    fields = ["applicant_id", "kind", "file", "stage", "ok", "view", "reasons", "face_score", "iod_px",
+              "sharpness", "brightness", "yaw", "bg"]
+    done = passed = people_ok = 0
     with open(out / "quality.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
-        for i, (aid, row) in enumerate(sorted(heads.items())):
-            img = cv2.imread(str(Path(args.photo_root) / row.path))
-            if img is None:
-                crop, q = None, Quality(False, ["unreadable"])
-            else:
-                crop, q = process(img, detector, segmenter)
-            if crop is not None:
-                cv2.imwrite(str(out / ("" if q.ok else "rejected") / f"{aid}.jpg"), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            passed += q.ok
-            w.writerow({
-                "applicant_id": aid, "kind": row.kind, "stage": row.stage, "ok": int(q.ok),
-                "reasons": " ".join(q.reasons), "face_score": f"{q.face_score:.3f}", "iod_px": f"{q.iod_px:.1f}",
-                "sharpness": f"{q.sharpness:.1f}", "brightness": f"{q.brightness:.1f}", "yaw": f"{q.yaw:.3f}", "bg": q.bg,
-            })
-            print(f"\r{i + 1}/{len(heads)} cropped, {passed} passed", end="", flush=True)
-    print()
+        for aid, photos in sorted(people.items()):
+            any_ok = False
+            for row in photos:
+                name = f"{aid}-{row.kind}.jpg"
+                img = cv2.imread(str(Path(args.photo_root) / row.path))
+                if img is None:
+                    crop, q = None, Quality(False, ["unreadable"])
+                else:
+                    crop, q = process(img, detector, segmenter)
+                    s = VIEW_MAX / max(img.shape[:2])
+                    view = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) if s < 1 else img
+                    cv2.imwrite(str(out / "photos" / name), view, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if crop is not None:
+                    cv2.imwrite(str(out / ("" if q.ok else "rejected") / name), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                passed += q.ok
+                any_ok |= q.ok
+                done += 1
+                w.writerow({
+                    "applicant_id": aid, "kind": row.kind, "file": name, "stage": row.stage, "ok": int(q.ok),
+                    "view": int(img is not None), "reasons": " ".join(q.reasons), "face_score": f"{q.face_score:.3f}",
+                    "iod_px": f"{q.iod_px:.1f}", "sharpness": f"{q.sharpness:.1f}", "brightness": f"{q.brightness:.1f}",
+                    "yaw": f"{q.yaw:.3f}", "bg": q.bg,
+                })
+                print(f"\r{done}/{len(rows)} photos, {passed} usable faces", end="", flush=True)
+            people_ok += any_ok
+    print(f"\n{people_ok}/{len(people)} applicants have at least one usable face")
     if segmenter is not None:
         segmenter.close()
 

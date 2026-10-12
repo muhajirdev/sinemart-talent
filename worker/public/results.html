@@ -166,14 +166,24 @@
       const beat = beatOf(f);
       return `<li id="f${f.id}">
         <div class="rank">${f.score == null ? "–" : i + 1}</div>
-        <img src="/img/${f.id}?t=${encodeURIComponent(token)}" alt="Applicant ${f.id}" loading="lazy">
+        <img src="/img/${f.id}?t=${encodeURIComponent(token)}" alt="Applicant ${f.id}" loading="lazy"
+          data-id="${f.id}" data-photos="${f.n_photos || 0}" data-v="0" ${f.n_photos ? 'style="cursor:pointer" title="Tap for their other photos"' : ""}>
         <div>
           <div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
           <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>
           <div class="meta">#${f.id} · ${f.look == null ? "no hill" : `<span class="tag ${hc(f.look)}">Hill ${f.look + 1}</span>`}
-            · won ${f.wins}/${f.games}${f.score_std == null ? "" : ` · ±${f.score_std.toFixed(2)}`}</div>
+            · won ${f.wins}/${f.games}${f.n_photos > 1 ? ` · ${f.n_photos} photos` : ""}${f.score_std == null ? "" : ` · ±${f.score_std.toFixed(2)}`}</div>
         </div></li>`;
     }).join("");
+    // Tap a thumbnail to flip through that person's photos (face crop first).
+    $("faces").querySelectorAll("img[data-photos]").forEach((im) => (im.onclick = () => {
+      const total = Number(im.dataset.photos) + 1;
+      if (total < 2) return;
+      const v = (Number(im.dataset.v) + 1) % total;
+      im.dataset.v = v;
+      im.style.objectFit = v ? "contain" : "cover";
+      im.src = `/img/${im.dataset.id}${v ? "/" + (v - 1) : ""}?t=${encodeURIComponent(token)}`;
+    }));
   }
 
   function renderMap() {

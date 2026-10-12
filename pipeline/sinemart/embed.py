@@ -6,12 +6,17 @@ same heads on each, keep whichever wins held-out agreement.
     python -m sinemart.embed crops/ siglip2 out/siglip2.npz
     python -m sinemart.embed crops/ dinov3  out/dinov3.npz
 
-Crops are named ``<applicant_id>.jpg``. Output: ``ids`` (int64), ``emb``
-(float32, L2-normalised), ``model`` (str).
+Crops are named ``<applicant_id>-<kind>.jpg`` (or plain ``<applicant_id>.jpg``).
+One person can have several usable face crops (closeup, full-body shots); we
+embed each and average them into one vector per person, so a single odd
+photo moves the score less. Output: ``ids`` (int64, one per applicant),
+``emb`` (float32, L2-normalised mean), ``n_photos`` (crops averaged),
+``model`` (str).
 """
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -45,27 +50,43 @@ def load(name: str):
     return encode
 
 
-def embed_dir(crop_dir: Path, name: str, batch: int = 64) -> tuple[np.ndarray, np.ndarray]:
+CROP_RE = re.compile(r"^(\d+)(?:-[a-z0-9]+)?$")
+
+
+def per_person(ids: list[int], emb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Average each applicant's photo embeddings and re-normalise."""
+    people = sorted(set(ids))
+    idx = {a: i for i, a in enumerate(people)}
+    total = np.zeros((len(people), emb.shape[1]), np.float64)
+    n = np.zeros(len(people), np.int64)
+    for a, e in zip(ids, emb):
+        total[idx[a]] += e
+        n[idx[a]] += 1
+    total /= np.linalg.norm(total, axis=1, keepdims=True)
+    return np.asarray(people, np.int64), total.astype(np.float32), n
+
+
+def embed_dir(crop_dir: Path, name: str, batch: int = 64) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     from PIL import Image
 
-    paths = sorted(p for p in crop_dir.glob("*.jpg") if p.stem.isdigit())
+    paths = sorted(p for p in crop_dir.glob("*.jpg") if CROP_RE.match(p.stem))
     encode = load(name)
     ids, chunks = [], []
     for i in range(0, len(paths), batch):
         group = paths[i : i + batch]
         chunks.append(encode([Image.open(p).convert("RGB") for p in group]))
-        ids.extend(int(p.stem) for p in group)
-        print(f"\r{name}: {i + len(group)}/{len(paths)}", end="", flush=True)
+        ids.extend(int(CROP_RE.match(p.stem)[1]) for p in group)
+        print(f"\r{name}: {i + len(group)}/{len(paths)} photos", end="", flush=True)
     print()
-    return np.asarray(ids, np.int64), np.concatenate(chunks).astype(np.float32)
+    return per_person(ids, np.concatenate(chunks))
 
 
 def main(argv: list[str]) -> None:
     if len(argv) != 4 or argv[2] not in MODELS:
         sys.exit(f"usage: python -m sinemart.embed CROP_DIR {{{','.join(MODELS)}}} OUT.npz")
-    ids, emb = embed_dir(Path(argv[1]), argv[2])
-    np.savez(argv[3], ids=ids, emb=emb, model=MODELS[argv[2]])
-    print(f"saved {emb.shape} to {argv[3]}")
+    ids, emb, n = embed_dir(Path(argv[1]), argv[2])
+    np.savez(argv[3], ids=ids, emb=emb, n_photos=n, model=MODELS[argv[2]])
+    print(f"saved {emb.shape} to {argv[3]} ({n.sum()} face crops, up to {n.max()} per person)")
 
 
 if __name__ == "__main__":

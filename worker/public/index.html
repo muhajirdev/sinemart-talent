@@ -18,13 +18,18 @@
   header a { color: var(--accent); font-size: 14px; text-decoration: none; white-space: nowrap; }
   #pair { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 0; }
   @media (max-aspect-ratio: 3/4) { #pair { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
-  button.face { all: unset; cursor: pointer; position: relative; border-radius: 12px; overflow: hidden;
+  button.face { all: unset; touch-action: pan-y; cursor: pointer; position: relative; border-radius: 12px; overflow: hidden;
     background: #808080; display: flex; align-items: center; justify-content: center; min-height: 0; }
   button.face img { width: 100%; height: 100%; object-fit: contain; display: block; }
   button.face:focus-visible { outline: 3px solid var(--accent); }
   button.face.chosen { outline: 4px solid var(--accent); }
   button.face kbd { position: absolute; left: 8px; bottom: 8px; background: #0008; color: #fff;
     padding: 2px 8px; border-radius: 6px; font: 13px system-ui; }
+  button.face .more { position: absolute; top: 8px; right: 8px; background: #000a; color: #fff; border: 0;
+    border-radius: 999px; padding: 6px 12px; font: 600 13px system-ui; cursor: pointer; }
+  button.face .dots { position: absolute; bottom: 10px; left: 0; right: 0; display: flex; gap: 5px; justify-content: center; pointer-events: none; }
+  button.face .dots i { width: 6px; height: 6px; border-radius: 50%; background: #fff6; }
+  button.face .dots i.on { background: #fff; }
   footer { display: flex; gap: 12px; justify-content: center; padding: 12px 0; }
   footer button { background: #333; color: var(--fg); border: 0; border-radius: 999px; padding: 10px 20px; font-size: 15px; }
   #msg { text-align: center; color: var(--muted); padding: 40px 0; }
@@ -54,8 +59,10 @@
 </form>
 <div id="msg" class="hide"></div>
 <main id="pair" class="hide">
-  <button class="face" id="left" aria-label="Pick left"><img alt=""><kbd>←</kbd></button>
-  <button class="face" id="right" aria-label="Pick right"><img alt=""><kbd>→</kbd></button>
+  <button class="face" id="left" aria-label="Pick left"><img alt=""><kbd>←</kbd>
+    <span class="more hide" role="button" aria-label="Next photo of this person"></span><span class="dots"></span></button>
+  <button class="face" id="right" aria-label="Pick right"><img alt=""><kbd>→</kbd>
+    <span class="more hide" role="button" aria-label="Next photo of this person"></span><span class="dots"></span></button>
 </main>
 <footer id="bar" class="hide">
   <button id="skip">Tidak bisa pilih / skip</button>
@@ -96,7 +103,39 @@
 
   const api = (path, opts = {}) =>
     fetch(path, { ...opts, headers: { "x-rater-token": token, "content-type": "application/json" } });
-  const imgUrl = (id) => `/img/${id}?t=${encodeURIComponent(token)}`;
+  const imgUrl = (id, n) => `/img/${id}${n == null ? "" : "/" + n}?t=${encodeURIComponent(token)}`;
+
+  // One person can have several photos. View 0 is the face crop the model
+  // scores; views 1.. are their whole photos (closeup, full-body 1, 2, ...).
+  // Swipe sideways on a face, or tap the photo counter, to flip through.
+  const views = { left: 0, right: 0 };
+  function showView(side) {
+    const id = current[side + "_id"], kinds = current[side + "_photos"] || [];
+    const total = kinds.length + 1, v = views[side];
+    const b = $(side);
+    b.querySelector("img").src = v === 0 ? imgUrl(id) : imgUrl(id, v - 1);
+    const more = b.querySelector(".more");
+    more.classList.toggle("hide", total < 2);
+    more.textContent = `${v === 0 ? "wajah · face" : kinds[v - 1].replace("fullbody", "full body ")} · ${v + 1}/${total} ›`;
+    b.querySelector(".dots").innerHTML = total < 2 ? "" : Array.from({ length: total }, (_, i) => `<i class="${i === v ? "on" : ""}"></i>`).join("");
+  }
+  function flip(side, step) {
+    if (!current) return;
+    const total = (current[side + "_photos"] || []).length + 1;
+    views[side] = (views[side] + step + total) % total;
+    showView(side);
+  }
+  let swiped = false;
+  for (const side of ["left", "right"]) {
+    const b = $(side);
+    b.querySelector(".more").addEventListener("click", (e) => { e.stopPropagation(); flip(side, 1); });
+    let x0 = null;
+    b.addEventListener("pointerdown", (e) => { x0 = e.clientX; swiped = false; });
+    b.addEventListener("pointerup", (e) => {
+      if (x0 !== null && Math.abs(e.clientX - x0) > 40) { swiped = true; flip(side, e.clientX < x0 ? 1 : -1); }
+      x0 = null;
+    });
+  }
 
   let current = null, next = null, shownAt = 0, busy = false, picks = 0;
 
@@ -114,8 +153,8 @@
 
   function render(p) {
     current = p;
-    $("left").querySelector("img").src = imgUrl(p.left_id);
-    $("right").querySelector("img").src = imgUrl(p.right_id);
+    views.left = views.right = 0;
+    showView("left"); showView("right");
     document.querySelectorAll(".face").forEach((b) => b.classList.remove("chosen"));
     $("msg").classList.add("hide"); $("pair").classList.remove("hide"); $("bar").classList.remove("hide");
     $("count").textContent = `${picks} pilihan · skor →`;
@@ -160,8 +199,8 @@
     } catch (e) { if (e.message) show(e.message); }
   }
 
-  $("left").onclick = () => pick("left");
-  $("right").onclick = () => pick("right");
+  $("left").onclick = () => { if (!swiped) pick("left"); swiped = false; };
+  $("right").onclick = () => { if (!swiped) pick("right"); swiped = false; };
   $("skip").onclick = () => pick("skip");
   addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT") return;

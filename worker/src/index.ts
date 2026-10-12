@@ -43,6 +43,15 @@ async function login(req: Request, env: Env) {
   return json({ token, name });
 }
 
+// Each side of a battle: the person, plus how many whole photos they have.
+async function withPhotos(env: Env, pair: { queue_id: number | null; left_id: number; right_id: number }) {
+  const { results } = await env.DB.prepare(
+    "SELECT applicant_id AS id, kind FROM photos WHERE applicant_id IN (?1, ?2) ORDER BY applicant_id, n",
+  ).bind(pair.left_id, pair.right_id).all<{ id: number; kind: string }>();
+  const kinds = (id: number) => results.filter((r) => r.id === id).map((r) => r.kind);
+  return { ...pair, left_photos: kinds(pair.left_id), right_photos: kinds(pair.right_id) };
+}
+
 async function nextPair(env: Env, who: Rater) {
   // Claim the oldest open pair; a pair served but unanswered for 10 minutes
   // goes back into the pool.
@@ -121,7 +130,8 @@ async function results(env: Env, who: string | null) {
   const { results: faces } = await env.DB.prepare(
     `SELECT a.id, a.score, a.score_std, a.look,
        (SELECT COUNT(*) FROM picks p WHERE p.winner_id = a.id) AS wins,
-       (SELECT COUNT(*) FROM picks p WHERE p.winner_id IS NOT NULL AND (p.left_id = a.id OR p.right_id = a.id)) AS games
+       (SELECT COUNT(*) FROM picks p WHERE p.winner_id IS NOT NULL AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
+       (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos
      FROM applicants a ORDER BY a.score DESC NULLS LAST, a.id`,
   ).all();
   const init = model?.init ? JSON.parse(model.init as string) : null;
@@ -141,6 +151,10 @@ async function raterResults(env: Env, who: string) {
   const counts = await env.DB.prepare(
     "SELECT COUNT(winner_id) AS decided, COUNT(*) AS total FROM picks WHERE rater = ?1",
   ).bind(who).first<{ decided: number; total: number }>();
+  const photoCount = new Map(
+    (await env.DB.prepare("SELECT applicant_id AS id, COUNT(*) AS n FROM photos GROUP BY applicant_id").all<{ id: number; n: number }>())
+      .results.map((r) => [r.id, r.n]),
+  );
   const wins = new Map<number, number>(), games = new Map<number, number>();
   for (const p of data.picks) {
     const [w, l] = [data.faces[p.w].id, data.faces[p.l].id];
@@ -156,6 +170,7 @@ async function raterResults(env: Env, who: string) {
       look: hills ? hills.hill(data.Z[i]) : null,
       wins: wins.get(f.id) ?? 0,
       games: games.get(f.id) ?? 0,
+      n_photos: photoCount.get(f.id) ?? 0,
     }))
     .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity) || a.id - b.id);
   return json({
@@ -202,7 +217,7 @@ export default {
     }
     if (url.pathname === "/api/pair" && req.method === "GET") {
       const pair = await nextPair(env, who);
-      return pair ? json(pair) : json({ error: "no applicants loaded" }, 404);
+      return pair ? json(await withPhotos(env, pair)) : json({ error: "no applicants loaded" }, 404);
     }
     if (url.pathname === "/api/pick" && req.method === "POST") return recordPick(req, env, who, ctx);
     if (url.pathname === "/api/results" && req.method === "GET") return results(env, only);
@@ -231,9 +246,14 @@ export default {
       return json({ ok: true });
     }
 
-    const img = url.pathname.match(/^\/img\/(\d+)$/);
+    // /img/<id> = the person's main face crop; /img/<id>/<n> = their n-th whole photo.
+    const img = url.pathname.match(/^\/img\/(\d+)(?:\/(\d+))?$/);
     if (img) {
-      const obj = await env.IMAGES.get(`crops/${img[1]}.jpg`);
+      const row = img[2] === undefined
+        ? await env.DB.prepare("SELECT image_key FROM applicants WHERE id = ?1").bind(Number(img[1])).first<{ image_key: string }>()
+        : await env.DB.prepare("SELECT image_key FROM photos WHERE applicant_id = ?1 AND n = ?2")
+            .bind(Number(img[1]), Number(img[2])).first<{ image_key: string }>();
+      const obj = row ? await env.IMAGES.get(row.image_key) : null;
       if (!obj) return new Response("not found", { status: 404 });
       return new Response(obj.body, {
         headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400" },

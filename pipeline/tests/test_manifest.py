@@ -31,3 +31,30 @@ def test_headshot_prefers_closeup():
     heads = pick_headshots(build_manifest(listing))
     assert heads[775].kind == "closeup"
     assert heads[164].kind == "fullbody1"
+
+
+def test_one_person_keeps_all_photos_closeup_first():
+    from sinemart.manifest import group_photos
+
+    rows = build_manifest([
+        {"Path": "01- Lolos/98 - A/98-Foto-Fullbody2-a.jpg", "Size": 1},
+        {"Path": "01- Lolos/98 - A/98-Foto-Closeup-a.jpg", "Size": 1},
+        {"Path": "01- Lolos/98 - A/98-Foto-Fullbody1-a.jpg", "Size": 1},
+        {"Path": "01- Lolos/98 - A/98-video.ts", "Size": 1},
+        {"Path": "01- Lolos/26 - B/26-Foto-Fullbody1-b.jpg", "Size": 1},
+    ])
+    people = group_photos(rows)
+    assert [r.kind for r in people[98]] == ["closeup", "fullbody1", "fullbody2"]
+    assert [r.kind for r in people[26]] == ["fullbody1"]
+
+
+def test_embeddings_average_per_person():
+    import numpy as np
+
+    from sinemart.embed import CROP_RE, per_person
+
+    assert CROP_RE.match("98-closeup")[1] == "98" and CROP_RE.match("98")[1] == "98"
+    e = np.array([[1, 0], [0, 1], [1, 0]], np.float32)
+    ids, emb, n = per_person([98, 98, 26], e)
+    assert ids.tolist() == [26, 98] and n.tolist() == [1, 2]
+    np.testing.assert_allclose(emb[1], [2 ** -0.5, 2 ** -0.5], rtol=1e-6)
