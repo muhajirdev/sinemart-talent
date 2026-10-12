@@ -83,8 +83,8 @@
   <div id="mapsvg"></div>
   <div id="tip" class="meta">Tap a face. Drag to move, pinch or scroll to zoom, double-tap to zoom in.</div>
   <div class="legend" id="legend"></div>
-  <p class="note">Brighter ground = higher on a hill. ▲ = a look's peak (its ideal face). Faces are ringed in
-    the colour of the hill they stand on. This is a flat slice of a higher-dimensional map, so distances are
+  <p class="note">Brighter ground = closer to a cluster's peak. ▲ = a look's peak (its ideal face). Faces are ringed in
+    the colour of their cluster. This is a flat slice of a higher-dimensional map, so distances are
     approximate; the scores below are exact.</p>
 </section>
 <section id="agree" class="card" hidden></section>
@@ -113,7 +113,7 @@
     if (d.rater) {
       $("model").innerHTML = `
         <div class="stats">
-          <div class="stat"><b>${trained ? "Hills" : "Not trained"}</b><span>${esc(d.rater)}'s own model · ${gname[state.gender] || ""}</span></div>
+          <div class="stat"><b>${trained ? "Clusters" : "Not trained"}</b><span>${esc(d.rater)}'s own model · ${gname[state.gender] || ""}</span></div>
           <div class="stat"><b>${p.decided}</b><span>picks by ${esc(d.rater)} (${p.total - p.decided} skipped)</span></div>
         </div>
         <p class="note">${trained
@@ -126,20 +126,20 @@
     }
     $("model").innerHTML = `
       <div class="stats">
-        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "hills" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, many hills)"} · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} hills` : `${m.hills || 0} hills (looks)`}</span></div>
+        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "hills" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, many clusters)"} · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
         <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.total - p.decided} skipped)</span></div>
-        <div class="stat"><b>${pct(m.heldout_hills)}</b><span>Model 1 many hills: held-out agreement</span></div>
-        <div class="stat"><b>${pct(m.heldout_one)}</b><span>Model 1 one hill, same test</span></div>
+        <div class="stat"><b>${pct(m.heldout_hills)}</b><span>Model 1 many clusters: held-out agreement</span></div>
+        <div class="stat"><b>${pct(m.heldout_one)}</b><span>Model 1 one cluster, same test</span></div>
         <div class="stat"><b>${pct(m.heldout_line)}</b><span>Model 1 straight arrow, same test</span></div>
-        ${(m.alternates || []).map((a, i) => `<div class="stat"><b>${pct(a.heldout)}</b><span>Model ${i + 2} many hills, same test</span></div>
-        <div class="stat"><b>${pct(a.heldout_one)}</b><span>Model ${i + 2} one hill, same test</span></div>`).join("")}
+        ${(m.alternates || []).map((a, i) => `<div class="stat"><b>${pct(a.heldout)}</b><span>Model ${i + 2} many clusters, same test</span></div>
+        <div class="stat"><b>${pct(a.heldout_one)}</b><span>Model ${i + 2} one cluster, same test</span></div>`).join("")}
       </div>
       <p class="note">${trained
         ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
         : "Learning starts after 5 picks."}
         Retrains by itself every ${m.retrain_every} picks${trained ? ` (next in ${toNext})` : ""}.</p>
       <p class="note">Score = how often (0–100) this person would win against an average applicant in the same group.
-        "Hill" = which look's peak they are closest to. Certainty = how settled the score is; it rises as they get more battles.</p>
+        "Cluster" = which look's peak they are closest to. Certainty = how settled the score is; it rises as they get more battles.</p>
       <p style="margin:12px 0 0; display:flex; gap:10px; flex-wrap:wrap">
         <button id="retrain">Retrain now</button>
         <button id="reset" class="danger">Reset all scores</button></p>`;
@@ -167,11 +167,11 @@
     return pg.length ? pg.slice(0, k).filter((g) => g === pg[k]).length : k;
   };
   const hc = (k) => `h${(local(k) % 8) + 1}c`; // fixed palette order; labels carry identity past 8
-  const hn = (k) => `Hill ${local(k) + 1}`;
+  const hn = (k) => `Cluster ${local(k) + 1}`;
   const gname = { f: "Cewek", m: "Cowok" };
-  const modeName = (mode, alts) => mode === "one" ? "Model 1 · one hill"
-    : !mode || mode === "hills" ? "Model 1 · many hills"
-    : `Model ${(alts || []).findIndex((a) => a.key === mode.split(":")[0]) + 2} · ${mode.endsWith(":one") ? "one hill" : "many hills"}`;
+  const modeName = (mode, alts) => mode === "one" ? "Model 1 · one cluster"
+    : !mode || mode === "hills" ? "Model 1 · many clusters"
+    : `Model ${(alts || []).findIndex((a) => a.key === mode.split(":")[0]) + 2} · ${mode.endsWith(":one") ? "one cluster" : "many clusters"}`;
   const battles = (f) => (f.games ? `Won ${f.wins} of ${f.games} battle${f.games === 1 ? "" : "s"}` : "No battles yet");
   // How settled the score is: the spread between retrains on resampled picks.
   const certainty = (f) => {
@@ -198,13 +198,13 @@
         <div>
           <div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
           <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>
-          <div class="meta">#${f.id} · ${f.look == null ? "no hill" : `<span class="tag ${hc(f.look)}">${hn(f.look)}</span>`}${f.gender ? ` · ${gname[f.gender]}${f.gender_src === "manual" ? " (fixed)" : ""}
+          <div class="meta">#${f.id} · ${f.look == null ? "no cluster" : `<span class="tag ${hc(f.look)}">${hn(f.look)}</span>`}${f.gender ? ` · ${gname[f.gender]}${f.gender_src === "manual" ? " (fixed)" : ""}
               <button class="gfix" data-id="${f.id}" data-g="${f.gender === "f" ? "m" : "f"}">wrong? move to ${gname[f.gender === "f" ? "m" : "f"]}</button>` : ""}</div>
           <div class="meta">${battles(f)}${f.n_photos > 1 ? ` · ${f.n_photos} photos` : ""}${certainty(f)}</div>
         </div></li>`;
     }).join("");
     $("faces").querySelectorAll(".gfix").forEach((b) => (b.onclick = async () => {
-      if (!confirm(`Move #${b.dataset.id} to ${gname[b.dataset.g]}? Their battles and hills switch group, and the model retrains.`)) return;
+      if (!confirm(`Move #${b.dataset.id} to ${gname[b.dataset.g]}? Their battles and clusters switch group, and the model retrains.`)) return;
       b.disabled = true;
       await api("/api/gender", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: Number(b.dataset.id), gender: b.dataset.g }) });
@@ -258,7 +258,7 @@
       const f = info.get(Number(el.dataset.id));
       $("mapsvg").querySelectorAll(".face").forEach((x) => x.classList.toggle("sel", x === el));
       const beat = beatOf(f);
-      $("tip").innerHTML = `<b>#${f.id}</b> · ${f.look == null ? "no hill" : hn(f.look)} · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${f.rank}`} · ${battles(f)}`;
+      $("tip").innerHTML = `<b>#${f.id}</b> · ${f.look == null ? "no cluster" : hn(f.look)} · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${f.rank}`} · ${battles(f)}`;
     }));
     const counts = {};
     m.faces.forEach((f) => (counts[f.hill] = (counts[f.hill] || 0) + 1));
@@ -399,8 +399,8 @@
   // Which model ranks the page: Model 1 with many hills (the one battles
   // use), Model 1 with one hill per group, or Model 2+ (another embedding).
   function renderModes(alts) {
-    const modes = [["hills", "Model 1 · many hills"], ["one", "Model 1 · one hill"],
-      ...(alts || []).flatMap((a, i) => [[a.key, `Model ${i + 2} · many hills`], [`${a.key}:one`, `Model ${i + 2} · one hill`]])];
+    const modes = [["hills", "Model 1 · many clusters"], ["one", "Model 1 · one cluster"],
+      ...(alts || []).flatMap((a, i) => [[a.key, `Model ${i + 2} · many clusters`], [`${a.key}:one`, `Model ${i + 2} · one cluster`]])];
     $("msw").innerHTML = modes.map(([v, l]) => `<button data-m="${v}" aria-pressed="${state.mode === v}">${l}</button>`).join("");
     $("msw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
       state.mode = b.dataset.m; state.filter = "all";
