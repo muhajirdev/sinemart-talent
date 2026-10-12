@@ -28,13 +28,68 @@ MODELS = {
     "dinov3": "facebook/dinov3-vitb16-pretrain-lvd1689m",
     # Open stand-in for DINOv3 until its licence is accepted.
     "dinov2": "facebook/dinov2-base",
+    # More comparison models (the scores page shows them as Model 3, 4, ...).
+    "siglip2l": "google/siglip2-so400m-patch14-384",
+    "clipl": "openai/clip-vit-large-patch14",
+    "pecore": "hf-hub:timm/PE-Core-L-14-336",
+    # Face-specific CLIP (LAION-Face). Research weights from the FaRL release.
+    "farl": "https://github.com/FacePerceiver/FaRL/releases/download/pretrained_weights/FaRL-Base-Patch16-LAIONFace20M-ep64.pth",
+    # Face recognition (InsightFace buffalo_l). Weights are non-commercial only.
+    "arcface": "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip",
 }
+
+# Where an ArcFace 112x112 crop sits inside our 512px headshot: same eye
+# spacing and eye height as the ArcFace template (eyes 35.2 px apart, 51.6 px
+# down), given our eyes are 512/5 apart at 0.40 of the height.
+ARCFACE_BOX = (93, 55, 419, 381)
+
+
+def _cached(url: str) -> Path:
+    import urllib.request
+    path = Path.home() / ".cache" / "sinemart" / url.rsplit("/", 1)[1]
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(url, path)
+    return path
+
+
+def _load_other(name: str):
+    import torch
+    if name == "arcface":
+        import zipfile
+        import onnxruntime as ort
+        zf = zipfile.ZipFile(_cached(MODELS[name]))
+        sess = ort.InferenceSession(zf.read("w600k_r50.onnx"), providers=["CPUExecutionProvider"])
+
+        def encode(images):
+            x = np.stack([np.asarray(im.crop(ARCFACE_BOX).resize((112, 112)), np.float32) for im in images])
+            x = ((x - 127.5) / 127.5).transpose(0, 3, 1, 2)
+            f = sess.run(None, {sess.get_inputs()[0].name: x})[0]
+            return f / np.linalg.norm(f, axis=1, keepdims=True)
+        return encode
+
+    import open_clip
+    if name == "farl":
+        model, _, prep = open_clip.create_model_and_transforms("ViT-B-16-quickgelu")
+        sd = torch.load(_cached(MODELS[name]), map_location="cpu", weights_only=False)["state_dict"]
+        model.load_state_dict({k: v for k, v in sd.items() if k in model.state_dict()}, strict=False)
+    else:
+        model, _, prep = open_clip.create_model_and_transforms(MODELS[name])
+    model.eval()
+
+    @torch.inference_mode()
+    def encode(images):
+        f = model.encode_image(torch.stack([prep(im) for im in images]))
+        return torch.nn.functional.normalize(f.float(), dim=-1).numpy()
+    return encode
 
 
 def load(name: str):
     import torch
     from transformers import AutoImageProcessor, AutoModel
 
+    if name in ("arcface", "farl", "pecore"):
+        return _load_other(name)
     repo = MODELS[name]
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     proc = AutoImageProcessor.from_pretrained(repo)
@@ -43,7 +98,7 @@ def load(name: str):
     @torch.inference_mode()
     def encode(images):
         x = proc(images=images, return_tensors="pt").to(device)
-        out = model.get_image_features(**x) if name == "siglip2" else model(**x)
+        out = model.get_image_features(**x) if name in ("siglip2", "siglip2l", "clipl") else model(**x)
         # transformers 5 returns a model output; 4.x returned the tensor.
         feats = out if isinstance(out, torch.Tensor) else out.pooler_output  # CLS for DINOv3
         feats = torch.nn.functional.normalize(feats.float(), dim=-1)

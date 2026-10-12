@@ -52,6 +52,9 @@
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--c); margin-right: 6px; vertical-align: -1px; }
   .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
   .chips button { background: var(--card); color: var(--fg); border: 1px solid #444; font-weight: 500; padding: 6px 14px; }
+  .cmp { border-collapse: collapse; margin: 12px 0 4px; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .cmp th, .cmp td { padding: 4px 14px 4px 0; text-align: left; }
+  .cmp th { color: var(--muted); font-weight: 500; }
   .chips button[aria-pressed="true"] { background: var(--fg); color: #111; border-color: var(--fg); }
   select { background: var(--card); color: var(--fg); border: 1px solid #555; border-radius: 10px; padding: 8px 10px; font-size: 15px; max-width: 100%; }
   .switch { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
@@ -60,6 +63,22 @@
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #3a3a3a; }
   th { color: var(--muted); font-weight: 500; font-size: 13px; }
   .scroll { overflow-x: auto; }
+  .lb { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.9); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; padding: 16px; touch-action: pan-y; }
+  .lb[hidden] { display: none; }
+  .lb .stage { position: relative; width: min(92vw, 640px); height: min(70vh, 720px); display: flex; align-items: center; justify-content: center; }
+  .lb .stage img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; user-select: none; -webkit-user-drag: none; }
+  .lb .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%; border: 0;
+    background: rgba(255,255,255,.15); color: #fff; font-size: 26px; cursor: pointer; }
+  .lb .prev { left: 4px; } .lb .next { right: 4px; }
+  .lb .close { position: absolute; top: 12px; right: 12px; width: 44px; height: 44px; border-radius: 50%; border: 0;
+    background: rgba(255,255,255,.15); color: #fff; font-size: 22px; cursor: pointer; }
+  .lb .cap { color: #eee; margin-top: 12px; text-align: center; font-size: 14px; line-height: 1.5; }
+  .lb .cap .label { color: #aaa; font-size: 13px; }
+  .lb .dots { display: flex; gap: 6px; justify-content: center; margin-top: 8px; }
+  .lb .dots i { width: 7px; height: 7px; border-radius: 50%; background: #666; }
+  .lb .dots i.on { background: #fff; }
+  #faces li { cursor: pointer; }
   .gfix { all: unset; cursor: pointer; color: var(--accent); font-size: 12px; margin-left: 6px; }
   .tag { display: inline-block; padding: 0 7px; border-radius: 999px; border: 1px solid var(--c); color: var(--fg); font-size: 12px; }
 </style>
@@ -73,6 +92,9 @@
 <div class="chips" id="msw" hidden>
 
 </div>
+<div class="chips" id="csw" hidden>
+  <button data-c="many" aria-pressed="true">Many clusters</button><button data-c="one" aria-pressed="false">One cluster</button>
+</div>
 <div class="switch" id="switch" hidden>
   <label for="who">Taste of</label>
   <select id="who"><option value="">All raters (team model)</option></select>
@@ -81,7 +103,7 @@
 <section id="map" class="card" hidden>
   <h2>Territory map</h2>
   <div id="mapsvg"></div>
-  <div id="tip" class="meta">Tap a face. Drag to move, pinch or scroll to zoom, double-tap to zoom in.</div>
+  <div id="tip" class="meta">Tap a face to see their photos. Drag to move, pinch or scroll to zoom, double-tap to zoom in.</div>
   <div class="legend" id="legend"></div>
   <p class="note">Brighter ground = closer to a cluster's peak. ▲ = a look's peak (its ideal face). Faces are ringed in
     the colour of their cluster. This is a flat slice of a higher-dimensional map, so distances are
@@ -91,6 +113,13 @@
 <h2 id="boardTitle" hidden>Leaderboard</h2>
 <div class="chips" id="chips"></div>
 <ol id="faces"></ol>
+<div class="lb" id="lb" hidden role="dialog" aria-modal="true" aria-label="Candidate photos">
+  <button class="close" id="lbClose" aria-label="Close">✕</button>
+  <div class="stage"><img id="lbImg" alt=""><button class="nav prev" id="lbPrev" aria-label="Previous photo">‹</button>
+    <button class="nav next" id="lbNext" aria-label="Next photo">›</button></div>
+  <div class="dots" id="lbDots"></div>
+  <div class="cap" id="lbCap"></div>
+</div>
 <script>
 (() => {
   let token = null;
@@ -128,12 +157,12 @@
       <div class="stats">
         <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "hills" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, many clusters)"} · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
         <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.total - p.decided} skipped)</span></div>
-        <div class="stat"><b>${pct(m.heldout_hills)}</b><span>Model 1 many clusters: held-out agreement</span></div>
-        <div class="stat"><b>${pct(m.heldout_one)}</b><span>Model 1 one cluster, same test</span></div>
-        <div class="stat"><b>${pct(m.heldout_line)}</b><span>Model 1 straight arrow, same test</span></div>
-        ${(m.alternates || []).map((a, i) => `<div class="stat"><b>${pct(a.heldout)}</b><span>Model ${i + 2} many clusters, same test</span></div>
-        <div class="stat"><b>${pct(a.heldout_one)}</b><span>Model ${i + 2} one cluster, same test</span></div>`).join("")}
+        <div class="stat"><b>${pct(m.heldout_line)}</b><span>Model 1 straight arrow: held-out agreement</span></div>
       </div>
+      <table class="cmp"><thead><tr><th>Held-out agreement</th><th>Many clusters</th><th>One cluster</th></tr></thead><tbody>
+        ${[["Model 1", m.heldout_hills, m.heldout_one], ...(m.alternates || []).map((a, i) => [`Model ${i + 2}`, a.heldout, a.heldout_one])]
+          .map(([n, a, b]) => `<tr><td>${n}</td><td>${pct(a)}</td><td>${pct(b)}</td></tr>`).join("")}
+      </tbody></table>
       <p class="note">${trained
         ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
         : "Learning starts after 5 picks."}
@@ -210,15 +239,55 @@
         body: JSON.stringify({ id: Number(b.dataset.id), gender: b.dataset.g }) });
       setTimeout(load, 1500);
     }));
-    // Tap a thumbnail to flip through that person's photos (face crop first).
-    $("faces").querySelectorAll("img[data-photos]").forEach((im) => (im.onclick = () => {
-      const total = Number(im.dataset.photos) + 1;
-      if (total < 2) return;
-      const v = (Number(im.dataset.v) + 1) % total;
-      im.dataset.v = v;
-      im.style.objectFit = v ? "contain" : "cover";
-      im.src = `/img/${im.dataset.id}${v ? "/" + (v - 1) : ""}?t=${encodeURIComponent(token)}`;
+    // Tap a row to open that person with all their photos.
+    $("faces").querySelectorAll("li").forEach((li) => (li.onclick = (e) => {
+      if (!e.target.closest(".gfix")) openBox(Number(li.id.slice(1)));
     }));
+  }
+
+  // Lightbox: one person large, face crop first, then every whole photo.
+  const lb = { id: null, v: 0, n: 1 };
+  function openBox(id) {
+    const list = state.d.faces, i = list.findIndex((f) => f.id === id);
+    const f = list[i];
+    if (!f) return;
+    Object.assign(lb, { id, v: 0, n: (f.n_photos || 0) + 1, f, rank: f.score == null ? null : i + 1 });
+    // Load every photo now so flipping never waits.
+    for (let k = 0; k < lb.n; k++) new Image().src = boxUrl(k);
+    $("lb").hidden = false;
+    showBox();
+  }
+  const boxUrl = (k) => `/img/${lb.id}${k ? "/" + (k - 1) : ""}?t=${encodeURIComponent(token)}`;
+  function showBox() {
+    const f = lb.f, beat = beatOf(f);
+    $("lbImg").src = boxUrl(lb.v);
+    $("lbImg").alt = `Applicant ${f.id}, photo ${lb.v + 1}`;
+    $("lbPrev").hidden = $("lbNext").hidden = lb.n < 2;
+    $("lbDots").innerHTML = lb.n < 2 ? "" : Array.from({ length: lb.n }, (_, k) => `<i class="${k === lb.v ? "on" : ""}"></i>`).join("");
+    $("lbCap").innerHTML = `<b>#${f.id}</b> · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${lb.rank}`}
+      · ${f.look == null ? "no cluster" : hn(f.look)}<br>${battles(f)}${certainty(f)}
+      <div class="label">${lb.v === 0 ? "Face" : `Photo ${lb.v} of ${lb.n - 1}`}</div>`;
+  }
+  const flipBox = (step) => { if (lb.n > 1) { lb.v = (lb.v + step + lb.n) % lb.n; showBox(); } };
+  const closeBox = () => { $("lb").hidden = true; lb.id = null; };
+  $("lbPrev").onclick = (e) => { e.stopPropagation(); flipBox(-1); };
+  $("lbNext").onclick = (e) => { e.stopPropagation(); flipBox(1); };
+  $("lbClose").onclick = closeBox;
+  $("lb").onclick = (e) => { if (e.target === $("lb")) closeBox(); };
+  addEventListener("keydown", (e) => {
+    if (lb.id == null) return;
+    if (e.key === "Escape") closeBox();
+    else if (e.key === "ArrowLeft") flipBox(-1);
+    else if (e.key === "ArrowRight") flipBox(1);
+  });
+  {
+    let x0 = null;
+    $("lbImg").addEventListener("pointerdown", (e) => { x0 = e.clientX; });
+    $("lbImg").addEventListener("pointerup", (e) => {
+      if (x0 === null) return;
+      const dx = e.clientX - x0; x0 = null;
+      flipBox(Math.abs(dx) > 40 ? (dx < 0 ? 1 : -1) : 1);
+    });
   }
 
   function renderMap() {
@@ -241,7 +310,7 @@
     ctx.putImageData(img, 0, 0);
     const info = new Map(d.faces.map((f, i) => [f.id, { ...f, rank: f.score == null ? null : i + 1 }]));
     const peaks = m.peaks.map((p) => `<g class="peak mark ${hc(p.k)}" data-x="${sx(p.x)}" data-y="${sy(p.y)}">
-        <path d="M0,-3.2 L2.8,1.8 L-2.8,1.8 Z"/><text x="3.4" y="1.2">H${local(p.k) + 1}</text></g>`).join("");
+        <path d="M0,-3.2 L2.8,1.8 L-2.8,1.8 Z"/><text x="3.4" y="1.2">C${local(p.k) + 1}</text></g>`).join("");
     const faces = m.faces.map((f) => `<g class="face mark ${hc(f.hill)}" data-id="${f.id}" data-x="${sx(f.x)}" data-y="${sy(f.y)}">
         <clipPath id="c${f.id}"><circle r="4.6"/></clipPath>
         <circle r="7" fill="transparent"/>
@@ -259,14 +328,15 @@
       $("mapsvg").querySelectorAll(".face").forEach((x) => x.classList.toggle("sel", x === el));
       const beat = beatOf(f);
       $("tip").innerHTML = `<b>#${f.id}</b> · ${f.look == null ? "no cluster" : hn(f.look)} · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${f.rank}`} · ${battles(f)}`;
+      openBox(f.id);
     }));
     const counts = {};
     m.faces.forEach((f) => (counts[f.hill] = (counts[f.hill] || 0) + 1));
     $("legend").innerHTML = m.peaks.map((p) => `<span class="${hc(p.k)}"><i></i>${hn(p.k)} · ${counts[p.k] || 0} faces</span>`).join("");
   }
 
-  // Pan and zoom by moving the viewBox. Faces and peaks keep their size on
-  // screen while zooming, so a crowded hill spreads out as you zoom in.
+  // Pan and zoom by moving the viewBox. Like a map, faces grow as you zoom
+  // in (up to a fifth of the view); peak labels keep their size on screen.
   function panZoom(svg) {
     const v = state.view, MIN = 100 / 16;
     state.ac?.abort(); // drop the window listeners of the previous map
@@ -275,8 +345,9 @@
     const marks = [...svg.querySelectorAll(".mark")];
     const apply = () => {
       svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.w}`);
-      const k = Math.max(v.w / 100, 0.35);
-      marks.forEach((el) => el.setAttribute("transform", `translate(${el.dataset.x},${el.dataset.y}) scale(${k})`));
+      const kf = Math.min(1, (0.2 * v.w) / 9.2), kp = v.w / 100;
+      marks.forEach((el) => el.setAttribute("transform",
+        `translate(${el.dataset.x},${el.dataset.y}) scale(${el.classList.contains("peak") ? kp : kf})`));
     };
     const clamp = () => {
       v.w = Math.min(100, Math.max(MIN, v.w));
@@ -380,7 +451,7 @@
     const q = state.rater ? `?rater=${encodeURIComponent(state.rater)}` : "";
     const mq = !state.rater && state.mode !== "hills" ? `${q ? "&" : "?"}mode=${encodeURIComponent(state.mode)}` : "";
     const g = `${q || mq ? "&" : "?"}gender=${state.gender}`;
-    $("msw").hidden = !!state.rater;
+    $("msw").hidden = $("csw").hidden = !!state.rater;
     const [r, mr, ar] = await Promise.all([api("/api/results" + q + mq), api("/api/map" + q + mq + g), api("/api/raters")]);
     if (r.status === 401) { $("msg").innerHTML = '<a href="/">Sign in on the picking page first</a>.'; return; }
     const data = await r.json();
@@ -398,14 +469,22 @@
   }
   // Which model ranks the page: Model 1 with many hills (the one battles
   // use), Model 1 with one hill per group, or Model 2+ (another embedding).
+  // Two choices: which model, and many clusters or one cluster per group.
+  const modeOf = (model, c) => model === "1" ? (c === "one" ? "one" : "hills") : c === "one" ? `${model}:one` : model;
   function renderModes(alts) {
-    const modes = [["hills", "Model 1 · many clusters"], ["one", "Model 1 · one cluster"],
-      ...(alts || []).flatMap((a, i) => [[a.key, `Model ${i + 2} · many clusters`], [`${a.key}:one`, `Model ${i + 2} · one cluster`]])];
-    $("msw").innerHTML = modes.map(([v, l]) => `<button data-m="${v}" aria-pressed="${state.mode === v}">${l}</button>`).join("");
+    const model = state.mode === "hills" || state.mode === "one" ? "1" : state.mode.split(":")[0];
+    const c = state.mode === "one" || state.mode.endsWith(":one") ? "one" : "many";
+    const models = [["1", "Model 1"], ...(alts || []).map((a, i) => [a.key, `Model ${i + 2}`])];
+    $("msw").innerHTML = models.map(([v, l]) => `<button data-m="${v}" aria-pressed="${model === v}">${l}</button>`).join("");
     $("msw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
-      state.mode = b.dataset.m; state.filter = "all";
+      state.mode = modeOf(b.dataset.m, c); state.filter = "all";
       load();
     }));
+    $("csw").hidden = false;
+    $("csw").querySelectorAll("button").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.c === c));
+      b.onclick = () => { state.mode = modeOf(model, b.dataset.c); state.filter = "all"; load(); };
+    });
   }
   $("gsw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
     state.gender = b.dataset.g; state.filter = "all"; Object.assign(state.view, { x: 0, y: 0, w: 100 });
