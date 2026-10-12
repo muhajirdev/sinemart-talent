@@ -18,3 +18,8 @@ bucket_name = "sinemart-talent"
 
 # ADMIN_TOKEN (guards /api/export.csv) is a secret:
 #   wrangler secret put ADMIN_TOKEN
+
+# Retraining fits every model (Model 1 plus the comparison models) on all
+# picks, which takes seconds of CPU. Allow up to 5 minutes (paid plan).
+[limits]
+cpu_ms = 300000

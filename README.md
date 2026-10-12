@@ -155,6 +155,11 @@ npx wrangler d1 execute sinemart-talent --remote --file ../data/out/alt_m2.sql
 Every retrain also fits Model 2 on the same picks and split; the scores page
 can switch to it. Battles always use Model 1.
 
+Loaded now (key = scores page name, by key order): m2 dinov2, m3 farl,
+m4 arcface, m5 siglip2l, m6 clipl, m7 pecore. Add another the same way with
+the next key. FaRL and ArcFace (InsightFace buffalo_l) weights are for research
+or non-commercial use only; check licences before using them beyond the prototype.
+
 ## Tests
 
 ```bash
