@@ -114,7 +114,6 @@ npx wrangler r2 bucket create sinemart-talent
 npx wrangler d1 execute sinemart-talent --remote --file schema.sql
 npx wrangler d1 execute sinemart-talent --remote --file migrate.sql   # only for a database made before the gender columns
 npx wrangler secret put ADMIN_TOKEN
-npx wrangler secret put TEAM_CODE               # the shared code on the team link
 python -m sinemart.publish ../data/siglip2.npz ../data/crops/quality.csv ../data/out ../data/gender.csv   # from pipeline/
 npx wrangler d1 execute sinemart-talent --remote --file ../data/out/seed.sql
 rclone copy ../data/crops r2:sinemart-talent/crops --max-depth 1 --include "*.jpg"   # face crops
@@ -122,8 +121,8 @@ rclone copy ../data/crops/photos r2:sinemart-talent/photos                      
 npx wrangler deploy
 ```
 
-Send the team one link, `https://<worker>/?team=<TEAM_CODE>`. Each rater types
-their name (no password); the same name on another phone is the same rater, and
+The app is open: anyone with the link types their name (no password, no
+code) and starts picking. Search engines are kept out (robots.txt, noindex); the same name on another phone is the same rater, and
 every pick is saved under it. Then they tap the more screen-worthy face. On a laptop they can use ← and →, and space to skip.
 Until the first training run the app serves random pairs.
 
