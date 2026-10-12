@@ -132,8 +132,8 @@
         ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
         : "Learning starts after 5 picks."}
         Retrains by itself every ${m.retrain_every} picks${trained ? ` (next in ${toNext})` : ""}.</p>
-      <p class="note">Score = how often (0–100) this face would win against an average applicant here.
-        "Hill" = which look's peak the face is closest to.</p>
+      <p class="note">Score = how often (0–100) this person would win against an average applicant in the same group.
+        "Hill" = which look's peak they are closest to. Certainty = how settled the score is; it rises as they get more battles.</p>
       <p style="margin:12px 0 0; display:flex; gap:10px; flex-wrap:wrap">
         <button id="retrain">Retrain now</button>
         <button id="reset" class="danger">Reset all scores</button></p>`;
@@ -163,6 +163,13 @@
   const hc = (k) => `h${(local(k) % 8) + 1}c`; // fixed palette order; labels carry identity past 8
   const hn = (k) => `Hill ${local(k) + 1}`;
   const gname = { f: "Cewek", m: "Cowok" };
+  const battles = (f) => (f.games ? `Won ${f.wins} of ${f.games} battle${f.games === 1 ? "" : "s"}` : "No battles yet");
+  // How settled the score is: the spread between retrains on resampled picks.
+  const certainty = (f) => {
+    if (f.score_std == null || f.score == null) return "";
+    const level = f.score_std < 0.25 ? "high" : f.score_std < 0.6 ? "medium" : "low";
+    return ` · <span title="Score spread across retrains: ±${f.score_std.toFixed(2)}. Lower = more settled.">Certainty: ${level}</span>`;
+  };
   const beatOf = (f) => (f.score == null ? null : 1 / (1 + Math.exp(-(f.score - state.mean))));
 
   function renderBoard() {
@@ -183,8 +190,8 @@
           <div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
           <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>
           <div class="meta">#${f.id} · ${f.look == null ? "no hill" : `<span class="tag ${hc(f.look)}">${hn(f.look)}</span>`}${f.gender ? ` · ${gname[f.gender]}${f.gender_src === "manual" ? " (fixed)" : ""}
-              <button class="gfix" data-id="${f.id}" data-g="${f.gender === "f" ? "m" : "f"}">move to ${gname[f.gender === "f" ? "m" : "f"]}</button>` : ""}
-            · won ${f.wins}/${f.games}${f.n_photos > 1 ? ` · ${f.n_photos} photos` : ""}${f.score_std == null ? "" : ` · ±${f.score_std.toFixed(2)}`}</div>
+              <button class="gfix" data-id="${f.id}" data-g="${f.gender === "f" ? "m" : "f"}">wrong? move to ${gname[f.gender === "f" ? "m" : "f"]}</button>` : ""}</div>
+          <div class="meta">${battles(f)}${f.n_photos > 1 ? ` · ${f.n_photos} photos` : ""}${certainty(f)}</div>
         </div></li>`;
     }).join("");
     $("faces").querySelectorAll(".gfix").forEach((b) => (b.onclick = async () => {
@@ -242,7 +249,7 @@
       const f = info.get(Number(el.dataset.id));
       $("mapsvg").querySelectorAll(".face").forEach((x) => x.classList.toggle("sel", x === el));
       const beat = beatOf(f);
-      $("tip").innerHTML = `<b>#${f.id}</b> · ${f.look == null ? "no hill" : hn(f.look)} · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${f.rank}`} · won ${f.wins}/${f.games}`;
+      $("tip").innerHTML = `<b>#${f.id}</b> · ${f.look == null ? "no hill" : hn(f.look)} · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${f.rank}`} · ${battles(f)}`;
     }));
     const counts = {};
     m.faces.forEach((f) => (counts[f.hill] = (counts[f.hill] || 0) + 1));
