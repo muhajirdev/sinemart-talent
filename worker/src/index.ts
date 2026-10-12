@@ -147,7 +147,7 @@ async function results(env: Env, who: string | null, mode: string | null = null)
      FROM model WHERE id = 1`,
   ).first<Record<string, unknown>>();
   const oneParams = model?.params_one as string | null;
-  const alternates = (await env.DB.prepare("SELECT key, heldout, n_picks FROM alt_models ORDER BY key").all()).results;
+  const alternates = (await env.DB.prepare("SELECT key, heldout, heldout_one, n_picks FROM alt_models ORDER BY key").all()).results;
   if (model) delete model.params_one;
   const picks = await env.DB.prepare(
     `SELECT COUNT(*) AS decided, SUM(tie) AS ties, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters
@@ -162,10 +162,13 @@ async function results(env: Env, who: string | null, mode: string | null = null)
   ).all<Record<string, unknown>>();
   let peakGender: (string | null)[] | null = null;
   if (mode && mode !== "one" && mode !== "hills") {
-    // Model 2 (another embedding), trained on the same picks.
-    const alt = await loadAlternate(env, mode);
-    const h = alt?.params ? hillsFrom(JSON.parse(alt.params)) : null;
-    peakGender = alt ? (alt.init.peak_gender ?? []) : [];
+    // Model 2 (another embedding), trained on the same picks. "m2:one" is
+    // that embedding with one hill per group.
+    const [key, variant] = mode.split(":");
+    const alt = await loadAlternate(env, key);
+    const params = variant === "one" ? alt?.paramsOne : alt?.params;
+    const h = params ? hillsFrom(JSON.parse(params)) : null;
+    peakGender = h ? h.pg : alt ? (alt.init.peak_gender ?? []) : [];
     for (const f of faces) {
       const z = alt?.zs.get(f.id as number), g = f.gender as string | null;
       f.score = h && z ? h.score(z, g) : null;
@@ -306,9 +309,11 @@ export default {
           const m = await env.DB.prepare("SELECT params_one FROM model WHERE id = 1").first<{ params_one: string | null }>();
           return json(await territory(env, { params: m?.params_one ?? null, faces }, gender));
         }
-        const alt = await loadAlternate(env, mode);
+        const [key, variant] = mode.split(":");
+        const alt = await loadAlternate(env, key);
         if (!alt) return json({ faces: [], peaks: [], grid: null });
-        return json(await territory(env, { params: alt.params, faces, zs: alt.zs, init: alt.init }, gender));
+        const params = variant === "one" ? alt.paramsOne : alt.params;
+        return json(await territory(env, { params, faces, zs: alt.zs, init: alt.init }, gender));
       }
       if (!only) return json(await territory(env, undefined, gender));
       const r = (await (await raterResults(env, only)).json()) as {
@@ -329,7 +334,10 @@ export default {
         env.DB.prepare("UPDATE applicants SET score = NULL, score_std = NULL, model = NULL, updated_at = NULL"),
         env.DB.prepare(
           `UPDATE model SET params = NULL, active = NULL, heldout_hills = NULL, heldout_line = NULL,
-           n_test = NULL, split_by = NULL, n_picks = 0, trained_at = NULL WHERE id = 1`,
+           params_one = NULL, heldout_one = NULL, n_test = NULL, split_by = NULL, n_picks = 0, trained_at = NULL WHERE id = 1`,
+        ),
+        env.DB.prepare(
+          "UPDATE alt_models SET params = NULL, heldout = NULL, params_one = NULL, heldout_one = NULL, n_picks = 0, trained_at = NULL",
         ),
       ]);
       return json({ ok: true });

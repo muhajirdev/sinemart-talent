@@ -128,10 +128,11 @@
       <div class="stats">
         <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "hills" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, many hills)"} · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} hills` : `${m.hills || 0} hills (looks)`}</span></div>
         <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.total - p.decided} skipped)</span></div>
-        <div class="stat"><b>${pct(m.heldout_hills)}</b><span>many hills: held-out agreement</span></div>
-        <div class="stat"><b>${pct(m.heldout_one)}</b><span>one hill per group, same test</span></div>
-        <div class="stat"><b>${pct(m.heldout_line)}</b><span>straight arrow, same test</span></div>
-        ${(m.alternates || []).map((a, i) => `<div class="stat"><b>${pct(a.heldout)}</b><span>Model ${i + 2} (many hills), same test</span></div>`).join("")}
+        <div class="stat"><b>${pct(m.heldout_hills)}</b><span>Model 1 many hills: held-out agreement</span></div>
+        <div class="stat"><b>${pct(m.heldout_one)}</b><span>Model 1 one hill, same test</span></div>
+        <div class="stat"><b>${pct(m.heldout_line)}</b><span>Model 1 straight arrow, same test</span></div>
+        ${(m.alternates || []).map((a, i) => `<div class="stat"><b>${pct(a.heldout)}</b><span>Model ${i + 2} many hills, same test</span></div>
+        <div class="stat"><b>${pct(a.heldout_one)}</b><span>Model ${i + 2} one hill, same test</span></div>`).join("")}
       </div>
       <p class="note">${trained
         ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
@@ -170,7 +171,7 @@
   const gname = { f: "Cewek", m: "Cowok" };
   const modeName = (mode, alts) => mode === "one" ? "Model 1 · one hill"
     : !mode || mode === "hills" ? "Model 1 · many hills"
-    : `Model ${(alts || []).findIndex((a) => a.key === mode) + 2}`;
+    : `Model ${(alts || []).findIndex((a) => a.key === mode.split(":")[0]) + 2} · ${mode.endsWith(":one") ? "one hill" : "many hills"}`;
   const battles = (f) => (f.games ? `Won ${f.wins} of ${f.games} battle${f.games === 1 ? "" : "s"}` : "No battles yet");
   // How settled the score is: the spread between retrains on resampled picks.
   const certainty = (f) => {
@@ -399,7 +400,7 @@
   // use), Model 1 with one hill per group, or Model 2+ (another embedding).
   function renderModes(alts) {
     const modes = [["hills", "Model 1 · many hills"], ["one", "Model 1 · one hill"],
-      ...(alts || []).map((a, i) => [a.key, `Model ${i + 2}`])];
+      ...(alts || []).flatMap((a, i) => [[a.key, `Model ${i + 2} · many hills`], [`${a.key}:one`, `Model ${i + 2} · one hill`]])];
     $("msw").innerHTML = modes.map(([v, l]) => `<button data-m="${v}" aria-pressed="${state.mode === v}">${l}</button>`).join("");
     $("msw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
       state.mode = b.dataset.m; state.filter = "all";

@@ -89,15 +89,15 @@ export function oneHill(Z: number[][], G: (string | null)[]) {
 // picks and the same held-out split, each in its own taste space. They only
 // feed the scores page; battles keep using the main model.
 export async function loadAlternate(env: Env, key: string) {
-  const row = await env.DB.prepare("SELECT init, params FROM alt_models WHERE key = ?1")
-    .bind(key).first<{ init: string; params: string | null }>();
+  const row = await env.DB.prepare("SELECT init, params, params_one FROM alt_models WHERE key = ?1")
+    .bind(key).first<{ init: string; params: string | null; params_one: string | null }>();
   if (!row) return null;
   const zs = new Map(
     (await env.DB.prepare("SELECT applicant_id AS id, z FROM alt_z WHERE key = ?1").bind(key).all<{ id: number; z: string }>())
       .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
   );
   const init = JSON.parse(row.init) as { peaks: number[][]; peak_gender?: string[] };
-  return { init, params: row.params, zs };
+  return { init, params: row.params, paramsOne: row.params_one, zs };
 }
 
 async function fitAlternates(
@@ -110,16 +110,20 @@ async function fitAlternates(
     if (!alt || faces.some((f) => !alt.zs.has(f.id))) continue; // must cover everyone
     const Z = faces.map((f) => alt.zs.get(f.id)!);
     const fresh = () => new Hills(alt.init.peaks, alt.init.peak_gender ?? []);
-    let heldout: number | null = null;
+    let heldout: number | null = null, heldoutOne: number | null = null;
     if (train.length >= MIN_PICKS && test.length >= 3) {
       const h = fresh().fit(Z, train, G);
       heldout = agreement(Z.map((z, i) => h.score(z, G[i])), test);
+      const o = oneHill(Z, G).fit(Z, train, G);
+      heldoutOne = agreement(Z.map((z, i) => o.score(z, G[i])), test);
     }
     const main = fresh().fit(Z, picks, G);
+    const one = oneHill(Z, G).fit(Z, picks, G);
     stmts.push(
       env.DB.prepare(
-        "UPDATE alt_models SET params = ?1, heldout = ?2, n_picks = ?3, trained_at = datetime('now') WHERE key = ?4",
-      ).bind(JSON.stringify(main), heldout, picks.length, key),
+        `UPDATE alt_models SET params = ?1, heldout = ?2, params_one = ?3, heldout_one = ?4, n_picks = ?5,
+           trained_at = datetime('now') WHERE key = ?6`,
+      ).bind(JSON.stringify(main), heldout, JSON.stringify(one), heldoutOne, picks.length, key),
     );
   }
   return stmts;

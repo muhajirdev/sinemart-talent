@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS alt_models (
   init       TEXT NOT NULL,
   params     TEXT,
   heldout    REAL,
+  params_one  TEXT,                        -- the same embedding with one hill per group
+  heldout_one REAL,
   n_picks    INTEGER NOT NULL DEFAULT 0,
   trained_at TEXT
 );
