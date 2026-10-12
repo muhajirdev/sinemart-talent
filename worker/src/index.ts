@@ -148,6 +148,19 @@ export default {
     if (url.pathname === "/api/pick" && req.method === "POST") return recordPick(req, env, who, ctx);
     if (url.pathname === "/api/results" && req.method === "GET") return results(env);
     if (url.pathname === "/api/retrain" && req.method === "POST") return json(await retrain(env));
+    if (url.pathname === "/api/reset" && req.method === "POST") {
+      // Start testing fresh: forget every pick and everything learned from them.
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM picks"),
+        env.DB.prepare("DELETE FROM pair_queue"),
+        env.DB.prepare("UPDATE applicants SET score = NULL, score_std = NULL, model = NULL, updated_at = NULL"),
+        env.DB.prepare(
+          `UPDATE model SET params = NULL, active = NULL, heldout_hills = NULL, heldout_line = NULL,
+           n_test = NULL, split_by = NULL, n_picks = 0, trained_at = NULL WHERE id = 1`,
+        ),
+      ]);
+      return json({ ok: true });
+    }
 
     const img = url.pathname.match(/^\/img\/(\d+)$/);
     if (img) {
