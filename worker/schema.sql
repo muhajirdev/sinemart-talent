@@ -14,10 +14,21 @@ CREATE TABLE IF NOT EXISTS applicants (
 );
 CREATE INDEX IF NOT EXISTS applicants_score ON applicants (score DESC);
 
--- Raters sign in with a per-person link (?t=<token>).
+-- Raters sign in with the team code and their name (POST /api/login), which
+-- hands back a token kept on the phone. Older per-person links (?t=<token>)
+-- still work. picks.rater holds the name, so every pick traces to a person.
 CREATE TABLE IF NOT EXISTS raters (
   token TEXT PRIMARY KEY,
   name  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS raters_name ON raters (lower(name));
+
+-- Each rater's personal hills model, cached until they make new picks.
+CREATE TABLE IF NOT EXISTS rater_models (
+  rater      TEXT PRIMARY KEY,
+  n_picks    INTEGER NOT NULL,
+  params     TEXT NOT NULL,
+  trained_at TEXT
 );
 
 -- Pairs chosen by the trainer (70% uncertain, 20% top, 10% random).

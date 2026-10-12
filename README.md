@@ -100,17 +100,22 @@ npx wrangler d1 create sinemart-talent          # paste the id into wrangler.tom
 npx wrangler r2 bucket create sinemart-talent
 npx wrangler d1 execute sinemart-talent --remote --file schema.sql
 npx wrangler secret put ADMIN_TOKEN
+npx wrangler secret put TEAM_CODE               # the shared code on the team link
 python -m sinemart.publish ../data/siglip2.npz ../data/crops/quality.csv ../data/out   # from pipeline/
 npx wrangler d1 execute sinemart-talent --remote --file ../data/out/seed.sql
 rclone copy ../data/crops r2:sinemart-talent/crops --exclude "rejected/**" --include "*.jpg"
-npx wrangler d1 execute sinemart-talent --remote --command \
-  "INSERT INTO raters VALUES ('<random token>', 'Rina')"   # one row per rater
 npx wrangler deploy
 ```
 
-Each rater opens `https://<worker>/?t=<their token>` on a phone and taps the
-more screen-worthy face. On a laptop they can use ← and →, and space to skip.
+Send the team one link, `https://<worker>/?team=<TEAM_CODE>`. Each rater types
+their name (no password); the same name on another phone is the same rater, and
+every pick is saved under it. Then they tap the more screen-worthy face. On a laptop they can use ← and →, and space to skip.
 Until the first training run the app serves random pairs.
+
+The scores page trains on everyone's picks by default (that model also picks
+the pairs). Its "Taste of" switch shows one rater's own model instead, and the
+agreement table shows how often the team model, and each other rater's
+model, gets that rater's picks right.
 
 ### 4. Train, then refill the queue (repeat every few hundred picks)
 

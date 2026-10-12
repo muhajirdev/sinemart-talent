@@ -29,6 +29,13 @@
   footer button { background: #333; color: var(--fg); border: 0; border-radius: 999px; padding: 10px 20px; font-size: 15px; }
   #msg { text-align: center; color: var(--muted); padding: 40px 0; }
   .hide { display: none !important; }
+  #login { max-width: 340px; margin: 40px auto; display: flex; flex-direction: column; gap: 12px; }
+  #login p { color: var(--muted); margin: 0; font-size: 14px; }
+  #login input { background: #333; color: var(--fg); border: 1px solid #555; border-radius: 10px; padding: 12px; font-size: 16px; }
+  #login button { background: var(--accent); color: #111; border: 0; border-radius: 999px; padding: 12px; font-size: 16px; font-weight: 600; }
+  #loginErr { color: #ff8a80; font-size: 14px; min-height: 1em; }
+  #who { color: var(--muted); font-size: 14px; }
+  #who button { all: unset; color: var(--accent); cursor: pointer; margin-left: 6px; }
   @media (hover: none) { button.face kbd { display: none; } }
 </style>
 </head>
@@ -37,6 +44,14 @@
   <h1>Siapa lebih layar? <span>Who's more screen-worthy?</span></h1>
   <a id="count" href="/results.html"></a>
 </header>
+<div id="who" class="hide"></div>
+<form id="login" class="hide">
+  <p>Ketik nama Anda. Setiap pilihan dicatat atas nama ini.<br>Type your name. Every pick is saved under it.</p>
+  <input id="name" autocomplete="name" placeholder="Nama / Name" maxlength="40" required>
+  <input id="code" placeholder="Kode tim / Team code" autocomplete="off">
+  <button type="submit">Mulai · Start</button>
+  <div id="loginErr"></div>
+</form>
 <div id="msg" class="hide"></div>
 <main id="pair" class="hide">
   <button class="face" id="left" aria-label="Pick left"><img alt=""><kbd>←</kbd></button>
@@ -48,15 +63,36 @@
 <script>
 (() => {
   const qs = new URLSearchParams(location.search);
-  let token = qs.get("t");
-  try {
-    if (token) { localStorage.setItem("rater", token); history.replaceState(null, "", "/"); }
-    else token = localStorage.getItem("rater");
-  } catch (_) {}
+  const store = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (_) {} };
+  const load = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+  let token = qs.get("t") || load("rater");
+  if (qs.get("team")) store("team", qs.get("team"));
+  if (qs.get("t")) store("rater", token);
+  if (qs.has("t") || qs.has("team")) history.replaceState(null, "", "/");
   const $ = (id) => document.getElementById(id);
   const show = (text) => { $("msg").textContent = text; $("msg").classList.remove("hide");
     $("pair").classList.add("hide"); $("bar").classList.add("hide"); };
-  if (!token) return show("Buka link rater Anda dulu. Open your personal rater link first.");
+
+  // Name-only sign-in behind the team code (from the team link).
+  function signIn(err) {
+    $("login").classList.remove("hide");
+    ["msg", "pair", "bar", "who"].forEach((id) => $(id).classList.add("hide"));
+    $("code").value = load("team") || "";
+    $("code").classList.toggle("hide", !!load("team") && !err);
+    $("loginErr").textContent = err || "";
+    $("name").focus();
+  }
+  $("login").onsubmit = async (e) => {
+    e.preventDefault();
+    const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: $("name").value, code: $("code").value.trim() }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return signIn(r.status === 403 ? "Kode tim salah. Wrong team code." : d.error || "Coba lagi. Try again.");
+    store("team", $("code").value.trim());
+    store("rater", (token = d.token));
+    $("login").classList.add("hide");
+    start();
+  };
 
   const api = (path, opts = {}) =>
     fetch(path, { ...opts, headers: { "x-rater-token": token, "content-type": "application/json" } });
@@ -66,7 +102,7 @@
 
   async function fetchPair() {
     const r = await api("/api/pair");
-    if (r.status === 401) throw new Error("Link rater tidak dikenal. Unknown rater link.");
+    if (r.status === 401) { store("rater", null); token = null; signIn(); throw new Error(""); }
     if (!r.ok) throw new Error("Belum ada foto. No applicants loaded yet.");
     const p = await r.json();
     // Preload both images before the pair is shown.
@@ -101,6 +137,7 @@
       const p = (await next) || (await fetchPair());
       render(p);
     } catch (e) {
+      if (!token) return;
       show(e.message || "Koneksi gagal, coba lagi. Connection failed, try again.");
       setTimeout(start, 3000);
     } finally { busy = false; }
@@ -108,21 +145,31 @@
 
   async function start() {
     try {
-      const me = await (await api("/api/me")).json();
+      const res = await api("/api/me");
+      if (res.status === 401) { store("rater", null); token = null; return signIn(); }
+      const me = await res.json();
       picks = me.picks || 0;
+      $("who").innerHTML = "";
+      $("who").append(`Halo, ${me.name}`);
+      const out = document.createElement("button");
+      out.textContent = "bukan saya · not me";
+      out.onclick = () => { store("rater", null); token = null; current = null; signIn(); };
+      $("who").append(out);
+      $("who").classList.remove("hide");
       render(await fetchPair());
-    } catch (e) { show(e.message); }
+    } catch (e) { if (e.message) show(e.message); }
   }
 
   $("left").onclick = () => pick("left");
   $("right").onclick = () => pick("right");
   $("skip").onclick = () => pick("skip");
   addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT") return;
     if (e.key === "ArrowLeft" || e.key === "1") pick("left");
     else if (e.key === "ArrowRight" || e.key === "2") pick("right");
     else if (e.key === " " || e.key === "ArrowDown") { e.preventDefault(); pick("skip"); }
   });
-  start();
+  token ? start() : signIn();
 })();
 </script>
 </body>

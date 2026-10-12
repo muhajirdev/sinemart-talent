@@ -3,12 +3,13 @@
 // Static UI lives in ../public; everything under /api and /img lands here.
 
 import { territory } from "./map";
-import { RETRAIN_EVERY, retrain } from "./retrain";
+import { MIN_PICKS, RETRAIN_EVERY, raterAgreement, raterModel, retrain } from "./retrain";
 
 export interface Env {
   DB: D1Database;
   IMAGES: R2Bucket;
   ADMIN_TOKEN: string;
+  TEAM_CODE: string; // shared code on the team link; with a name it signs a rater in
 }
 
 type Rater = { token: string; name: string };
@@ -24,6 +25,22 @@ async function rater(req: Request, env: Env): Promise<Rater | null> {
   const token = req.headers.get("x-rater-token") ?? url.searchParams.get("t");
   if (!token) return null;
   return env.DB.prepare("SELECT token, name FROM raters WHERE token = ?1").bind(token).first<Rater>();
+}
+
+// Name-only sign-in behind the team code. The same name (any case) is the
+// same rater, so picks stay traceable to a person across devices.
+async function login(req: Request, env: Env) {
+  const body = (await req.json().catch(() => ({}))) as { name?: string; code?: string };
+  if (!env.TEAM_CODE || body.code !== env.TEAM_CODE) return json({ error: "wrong team code" }, 403);
+  const name = String(body.name ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+  if (name.length < 2) return json({ error: "type your name" }, 400);
+  const known = await env.DB.prepare("SELECT token, name FROM raters WHERE lower(name) = lower(?1)")
+    .bind(name)
+    .first<Rater>();
+  if (known) return json(known);
+  const token = [...crypto.getRandomValues(new Uint8Array(18))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  await env.DB.prepare("INSERT INTO raters (token, name) VALUES (?1, ?2)").bind(token, name).run();
+  return json({ token, name });
 }
 
 async function nextPair(env: Env, who: Rater) {
@@ -93,7 +110,8 @@ async function maybeRetrain(env: Env) {
   else if (row && row.trained === 0 && row.picks >= 5) await retrain(env);
 }
 
-async function results(env: Env) {
+async function results(env: Env, who: string | null) {
+  if (who) return raterResults(env, who);
   const model = await env.DB.prepare(
     "SELECT active, heldout_hills, heldout_line, n_test, split_by, n_picks, trained_at, init FROM model WHERE id = 1",
   ).first<Record<string, unknown>>();
@@ -112,6 +130,43 @@ async function results(env: Env) {
     model: { ...model, embedding: init?.model ?? null, hills: init?.peaks?.length ?? 0, retrain_every: RETRAIN_EVERY },
     picks,
     faces,
+  });
+}
+
+// The same page, scored by one rater's personal model.
+async function raterResults(env: Env, who: string) {
+  const m = await raterModel(env, who);
+  if (!m) return json({ error: "no taste space loaded yet" }, 404);
+  const { data, hills, n } = m;
+  const counts = await env.DB.prepare(
+    "SELECT COUNT(winner_id) AS decided, COUNT(*) AS total FROM picks WHERE rater = ?1",
+  ).bind(who).first<{ decided: number; total: number }>();
+  const wins = new Map<number, number>(), games = new Map<number, number>();
+  for (const p of data.picks) {
+    const [w, l] = [data.faces[p.w].id, data.faces[p.l].id];
+    wins.set(w, (wins.get(w) ?? 0) + 1);
+    games.set(w, (games.get(w) ?? 0) + 1);
+    games.set(l, (games.get(l) ?? 0) + 1);
+  }
+  const faces = data.faces
+    .map((f, i) => ({
+      id: f.id,
+      score: hills ? hills.score(data.Z[i]) : null,
+      score_std: null,
+      look: hills ? hills.hill(data.Z[i]) : null,
+      wins: wins.get(f.id) ?? 0,
+      games: games.get(f.id) ?? 0,
+    }))
+    .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity) || a.id - b.id);
+  return json({
+    rater: who,
+    model: {
+      active: hills ? "hills" : null, n_picks: hills ? n : 0, trained_at: hills ? new Date().toISOString() : null,
+      hills: data.peaks.length, min_picks: MIN_PICKS, retrain_every: RETRAIN_EVERY,
+    },
+    picks: { decided: counts?.decided ?? 0, total: counts?.total ?? 0, raters: 1 },
+    faces,
+    params: hills ? JSON.stringify(hills) : null,
   });
 }
 
@@ -135,8 +190,11 @@ export default {
       return exportPicks(env);
     }
 
+    if (url.pathname === "/api/login" && req.method === "POST") return login(req, env);
+
     const who = await rater(req, env);
-    if (!who) return json({ error: "ask for your rater link" }, 401);
+    if (!who) return json({ error: "sign in first" }, 401);
+    const only = url.searchParams.get("rater"); // results/map for one rater's taste
 
     if (url.pathname === "/api/me") {
       const mine = await env.DB.prepare("SELECT COUNT(*) AS n FROM picks WHERE rater = ?1 AND winner_id IS NOT NULL").bind(who.name).first<{ n: number }>();
@@ -147,14 +205,23 @@ export default {
       return pair ? json(pair) : json({ error: "no applicants loaded" }, 404);
     }
     if (url.pathname === "/api/pick" && req.method === "POST") return recordPick(req, env, who, ctx);
-    if (url.pathname === "/api/results" && req.method === "GET") return results(env);
-    if (url.pathname === "/api/map" && req.method === "GET") return json(await territory(env));
+    if (url.pathname === "/api/results" && req.method === "GET") return results(env, only);
+    if (url.pathname === "/api/map" && req.method === "GET") {
+      if (!only) return json(await territory(env));
+      const r = (await (await raterResults(env, only)).json()) as {
+        params: string | null; faces: { id: number; score: number | null; look: number | null }[];
+      };
+      if (!r.faces) return json({ faces: [], peaks: [], grid: null });
+      return json(await territory(env, { params: r.params, faces: new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }])) }));
+    }
+    if (url.pathname === "/api/raters" && req.method === "GET") return json(await raterAgreement(env));
     if (url.pathname === "/api/retrain" && req.method === "POST") return json(await retrain(env));
     if (url.pathname === "/api/reset" && req.method === "POST") {
       // Start testing fresh: forget every pick and everything learned from them.
       await env.DB.batch([
         env.DB.prepare("DELETE FROM picks"),
         env.DB.prepare("DELETE FROM pair_queue"),
+        env.DB.prepare("DELETE FROM rater_models"),
         env.DB.prepare("UPDATE applicants SET score = NULL, score_std = NULL, model = NULL, updated_at = NULL"),
         env.DB.prepare(
           `UPDATE model SET params = NULL, active = NULL, heldout_hills = NULL, heldout_line = NULL,

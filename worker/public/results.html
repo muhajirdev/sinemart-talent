@@ -48,12 +48,23 @@
   .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
   .chips button { background: var(--card); color: var(--fg); border: 1px solid #444; font-weight: 500; padding: 6px 14px; }
   .chips button[aria-pressed="true"] { background: var(--fg); color: #111; border-color: var(--fg); }
+  select { background: var(--card); color: var(--fg); border: 1px solid #555; border-radius: 10px; padding: 8px 10px; font-size: 15px; max-width: 100%; }
+  .switch { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
+  .switch label { color: var(--muted); font-size: 14px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #3a3a3a; }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .scroll { overflow-x: auto; }
   .tag { display: inline-block; padding: 0 7px; border-radius: 999px; border: 1px solid var(--c); color: var(--fg); font-size: 12px; }
 </style>
 </head>
 <body>
 <header><h1>Skor kecantikan · Beauty scores</h1><a href="/">← Pilih</a></header>
 <div id="msg">Loading…</div>
+<div class="switch" id="switch" hidden>
+  <label for="who">Selera · Taste of</label>
+  <select id="who"><option value="">Semua rater · All raters (team model)</option></select>
+</div>
 <section id="model" class="card" hidden></section>
 <section id="map" class="card" hidden>
   <h2>Peta wilayah · Territory map</h2>
@@ -64,6 +75,7 @@
     the colour of the hill they stand on. This is a flat slice of a higher-dimensional map, so distances are
     approximate; the scores below are exact.</p>
 </section>
+<section id="agree" class="card" hidden></section>
 <h2 id="boardTitle" hidden>Peringkat · Leaderboard</h2>
 <div class="chips" id="chips"></div>
 <ol id="faces"></ol>
@@ -73,7 +85,7 @@
   try { token = new URLSearchParams(location.search).get("t") || localStorage.getItem("rater");
     if (token) localStorage.setItem("rater", token); } catch (_) {}
   const $ = (id) => document.getElementById(id);
-  if (!token) { $("msg").textContent = "Open your personal rater link first."; return; }
+  if (!token) { $("msg").innerHTML = 'Masuk dulu · <a href="/">Sign in on the pick page first</a>.'; return; }
   const api = (path, opts = {}) => fetch(path, { ...opts, headers: { "x-rater-token": token } });
   const pct = (x) => (x == null ? "–" : Math.round(x * 100) + "%");
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -86,6 +98,20 @@
     const mean = scored.reduce((a, f) => a + f.score, 0) / (scored.length || 1);
     const toNext = Math.max(0, (m.n_picks || 0) + m.retrain_every - p.decided);
     $("model").hidden = false;
+    if (d.rater) {
+      $("model").innerHTML = `
+        <div class="stats">
+          <div class="stat"><b>${trained ? "Hills" : "Not trained"}</b><span>${esc(d.rater)}'s own model · ${m.hills || 0} hills</span></div>
+          <div class="stat"><b>${p.decided}</b><span>picks by ${esc(d.rater)} (${p.total - p.decided} skipped)</span></div>
+        </div>
+        <p class="note">${trained
+          ? `Scores below come only from ${esc(d.rater)}'s picks: this is one person's taste. The team model (all raters) is what drives the pairs.`
+          : `${esc(d.rater)} needs ${m.min_picks} picks before a personal model can be trained.`}</p>`;
+      state.d = d; state.mean = mean;
+      renderBoard();
+      $("msg").hidden = true;
+      return;
+    }
     $("model").innerHTML = `
       <div class="stats">
         <div class="stat"><b>${trained ? "Hills" : "Not trained"}</b><span>active model · ${m.hills || 0} hills (looks)</span></div>
@@ -120,7 +146,7 @@
     $("msg").hidden = true;
   }
 
-  const state = { d: null, mean: 0, filter: "all", map: null, sel: null };
+  const state = { d: null, mean: 0, filter: "all", map: null, sel: null, rater: "" };
   const hc = (k) => `h${(k % 8) + 1}c`; // fixed palette order; labels carry identity past 8
   const beatOf = (f) => (f.score == null ? null : 1 / (1 + Math.exp(-(f.score - state.mean))));
 
@@ -141,7 +167,7 @@
           <div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
           <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>
           <div class="meta">#${f.id} · ${f.look == null ? "no hill" : `<span class="tag ${hc(f.look)}">Hill ${f.look + 1}</span>`}
-            · won ${f.wins}/${f.games}${f.score == null ? "" : ` · ±${(f.score_std ?? 0).toFixed(2)}`}</div>
+            · won ${f.wins}/${f.games}${f.score_std == null ? "" : ` · ±${f.score_std.toFixed(2)}`}</div>
         </div></li>`;
     }).join("");
   }
@@ -186,13 +212,47 @@
     $("legend").innerHTML = m.peaks.map((p) => `<span class="${hc(p.k)}"><i></i>Hill ${p.k + 1} · ${counts[p.k] || 0} faces</span>`).join("");
   }
 
+  function renderAgree(a) {
+    if (!a.raters.length) return;
+    const names = a.raters.map((r) => r.name);
+    const opts = $("who");
+    const keep = state.rater;
+    opts.innerHTML = '<option value="">Semua rater · All raters (team model)</option>' +
+      names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("");
+    opts.value = keep;
+    $("switch").hidden = false;
+    const cell = (x, n) => (x == null ? "–" : `${pct(x)}<span class="meta"> /${n}</span>`);
+    const cross = new Map(a.cross.map((c) => [`${c.model}|${c.picks_of}`, c]));
+    $("agree").hidden = false;
+    $("agree").innerHTML = `<h2>Kesepakatan rater · Rater agreement</h2>
+      <div class="scroll"><table>
+        <tr><th>Rater</th><th>Picks</th><th>Team model agrees</th>${names.length > 1 ? names.map((n) => `<th>${esc(n)}'s taste predicts</th>`).join("") : ""}</tr>
+        ${a.raters.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.picks}</td><td>${cell(r.team, r.picks)}</td>
+          ${names.length > 1 ? names.map((m) => {
+            if (m === r.name) return "<td class='meta'>·</td>";
+            const c = cross.get(`${m}|${r.name}`);
+            return `<td>${c ? cell(c.agree, c.n) : "–"}</td>`;
+          }).join("") : ""}</tr>`).join("")}
+      </table></div>
+      ${a.same_pair.length ? `<p class="note">Same pair judged twice: ${a.same_pair.map((s) =>
+        `${esc(s.a)} &amp; ${esc(s.b)} picked the same face ${pct(s.agree)} of ${s.n}`).join("; ")}.</p>` : ""}
+      <p class="note">Each row is one rater's picks. "Team model agrees" = how many of their picks the all-raters ranking
+        gets right (it learned from them, so this runs high). "X's taste predicts" = how many of that row's picks X's
+        personal model gets right. 50% is a coin flip; near 100% means the two see beauty the same way.
+        ${names.length < 2 ? "A second rater is needed to compare people." : ""}</p>`;
+  }
+
   async function load() {
-    const [r, mr] = await Promise.all([api("/api/results"), api("/api/map")]);
-    if (!r.ok) { $("msg").textContent = "Unknown rater link."; return; }
+    const q = state.rater ? `?rater=${encodeURIComponent(state.rater)}` : "";
+    const [r, mr, ar] = await Promise.all([api("/api/results" + q), api("/api/map" + q), api("/api/raters")]);
+    if (r.status === 401) { $("msg").innerHTML = 'Masuk dulu · <a href="/">Sign in on the pick page first</a>.'; return; }
     render(await r.json());
     state.map = mr.ok ? await mr.json() : null;
+    $("map").hidden = true;
     renderMap();
+    if (ar.ok) renderAgree(await ar.json());
   }
+  $("who").onchange = () => { state.rater = $("who").value; state.filter = "all"; load(); };
   load();
 })();
 </script>

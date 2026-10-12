@@ -1,4 +1,5 @@
 name = "sinemart-talent"
+account_id = "67f961331110b81774851ee4f54349b9"
 main = "src/index.ts"
 compatibility_date = "2025-09-01"
 

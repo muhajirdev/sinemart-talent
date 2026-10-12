@@ -61,6 +61,7 @@ def main(argv: list[str]) -> None:
             vec.write(json.dumps({"id": str(aid), "values": rnd(emb[i])}) + "\n")
         init = json.dumps({"peaks": [rnd(p) for p in peaks], "model": str(data["model"])})
         sql.write(f"INSERT OR REPLACE INTO model (id, init) VALUES (1, '{init}');\n")
+        sql.write("DELETE FROM rater_models;\n")  # a new taste space; personal models refit on demand
     print(f"{len(ids)} applicants ready ({(~keep).sum()} skipped by the quality gate), {len(peaks)} looks")
 
 

@@ -39,15 +39,22 @@ function height(p: number[], q: number[][]) {
   return m + Math.log(t.reduce((s, x) => s + Math.exp(x - m), 0));
 }
 
-export async function territory(env: Env, gridN = 48) {
+// `own` swaps in one rater's personal model (its params and per-face
+// score/hill) in place of the team's.
+export async function territory(
+  env: Env,
+  own?: { params: string | null; faces: Map<number, { score: number | null; hill: number | null }> },
+  gridN = 48,
+) {
   const model = await env.DB.prepare("SELECT init, params FROM model WHERE id = 1").first<{ init: string; params: string | null }>();
   if (!model?.init) return { faces: [], peaks: [], grid: null };
   const peaks0: number[][] = JSON.parse(model.init).peaks;
   const r = peaks0[0].length;
   let A: number[] = Array.from({ length: r * r }, (_, i) => (i % (r + 1) === 0 ? 1 : 0));
   let q = peaks0;
-  if (model.params) {
-    const p = JSON.parse(model.params) as { A: number[]; q: number[]; K: number };
+  const params = own ? own.params : model.params;
+  if (params) {
+    const p = JSON.parse(params) as { A: number[]; q: number[]; K: number };
     A = p.A;
     q = Array.from({ length: p.K }, (_, k) => p.q.slice(k * r, (k + 1) * r));
   }
@@ -55,6 +62,13 @@ export async function territory(env: Env, gridN = 48) {
   const { results } = await env.DB.prepare("SELECT id, z, score, look FROM applicants WHERE z IS NOT NULL").all<{
     id: number; z: string; score: number | null; look: number | null;
   }>();
+  if (own) {
+    for (const f of results) {
+      const o = own.faces.get(f.id);
+      f.score = o?.score ?? null;
+      f.look = o?.hill ?? null;
+    }
+  }
   const zp = results.map((f) => {
     const z = JSON.parse(f.z) as number[];
     return Array.from({ length: r }, (_, i) => z.reduce((s, x, j) => s + A[i * r + j] * x, 0));
