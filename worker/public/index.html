@@ -130,22 +130,29 @@
   // scores; views 1.. are their whole photos (closeup, full-body 1, 2, ...).
   // Looking (arrows, dots, swipe, tap on the photo) is kept apart from
   // choosing (the "Pilih" button), so browsing never picks by accident.
-  const views = { left: 0, right: 0 };
+  // Both sides flip together (face with face, full body with full body);
+  // someone with fewer photos stays on their last one.
+  let view = 0;
+  const views = { get left() { return Math.min(view, total("left") - 1); }, get right() { return Math.min(view, total("right") - 1); } };
+  const total = (side) => (current?.[side + "_photos"] || []).length + 1;
   const label = (kinds, v) => v === 0 ? "Wajah" : kinds[v - 1] === "closeup" ? "Close-up"
     : kinds[v - 1].startsWith("fullbody") ? "Seluruh badan " + kinds[v - 1].slice(8) : "Foto lain";
   function showView(side) {
     const id = current[side + "_id"], kinds = current[side + "_photos"] || [];
     const total = kinds.length + 1, v = views[side], box = $(side).querySelector(".photo");
-    box.querySelector("img").src = v === 0 ? imgUrl(id) : imgUrl(id, v - 1);
+    // Swap only once the photo is ready, so the old one never blanks out.
+    const url = v === 0 ? imgUrl(id) : imgUrl(id, v - 1);
+    box.dataset.want = url;
+    preload(url).then(() => { if (box.dataset.want === url) box.querySelector("img").src = url; });
     box.querySelector(".label").textContent = total < 2 ? "Wajah" : `${label(kinds, v)} · ${v + 1}/${total}`;
     box.querySelectorAll(".nav").forEach((n) => n.classList.toggle("hide", total < 2));
     box.querySelector(".dots").innerHTML = total < 2 ? "" : Array.from({ length: total }, (_, i) => `<i class="${i === v ? "on" : ""}"></i>`).join("");
   }
   function flip(side, step) {
     if (!current) return;
-    const total = (current[side + "_photos"] || []).length + 1;
-    views[side] = (views[side] + step + total) % total;
-    showView(side);
+    const n = Math.max(total("left"), total("right"));
+    view = (Math.min(view, total(side) - 1) + step + n) % n;
+    showView("left"); showView("right");
   }
   for (const side of ["left", "right"]) {
     const box = $(side).querySelector(".photo");
@@ -162,23 +169,68 @@
     });
   }
 
-  let current = null, next = null, shownAt = 0, busy = false, picks = 0;
+  let current = null, shownAt = 0, busy = false, picks = 0;
 
+  // Everything is loaded ahead so nothing waits: a few pairs are fetched in
+  // advance with every photo of both people, and answers are saved in the
+  // background while the next pair is already on screen.
+  // Photos load a few at a time, most urgent first (faces, then the photos
+  // of the pair on screen, then the rest), so they never crowd each other.
+  const AHEAD = 3, cache = new Map(), waiting = [];
+  let loading = 0;
+  function pump() {
+    while (loading < 4 && waiting.length) {
+      const e = waiting.shift(); e.started = true; loading++;
+      const im = new Image();
+      const done = () => { loading--; e.ok(); pump(); };
+      im.onload = () => (im.decode ? im.decode().catch(() => {}) : Promise.resolve()).then(done);
+      im.onerror = done; im.src = e.url;
+    }
+  }
+  function preload(url, urgent = true) {
+    let e = cache.get(url);
+    if (!e) { e = { url }; e.p = new Promise((ok) => (e.ok = ok)); cache.set(url, e); waiting.push(e); }
+    if (urgent && !e.started) { waiting.splice(waiting.indexOf(e), 1); waiting.unshift(e); }
+    pump();
+    return e.p;
+  }
+  const photoUrls = (p) => [p.left_id, p.right_id].flatMap((id) => {
+    const kinds = p[id === p.left_id ? "left_photos" : "right_photos"] || [];
+    return [imgUrl(id), ...kinds.map((_, n) => imgUrl(id, n))];
+  });
   async function fetchPair() {
     const r = await api("/api/pair");
     if (r.status === 401) { store("rater", null); token = null; signIn(); throw new Error(""); }
     if (!r.ok) throw new Error("Belum ada foto peserta.");
     const p = await r.json();
-    // Preload both images before the pair is shown.
-    await Promise.all([p.left_id, p.right_id].map((id) => new Promise((ok) => {
-      const im = new Image(); im.onload = im.onerror = ok; im.src = imgUrl(id);
-    })));
+    // Ready once both faces are in; their other photos keep loading behind.
+    const urls = photoUrls(p);
+    urls.forEach((u) => preload(u, false));
+    await Promise.all([preload(urls[0]), preload(imgUrl(p.right_id))]);
     return p;
   }
+  let ahead = [];
+  const refill = () => { while (ahead.length < AHEAD) ahead.push(fetchPair().catch(() => null)); };
+  async function take() {
+    refill();
+    const p = await ahead.shift();
+    refill();
+    return p || fetchPair();
+  }
+
+  // Answers go out in order, in the background, retried on a bad connection.
+  let saving = Promise.resolve();
+  const send = (body) => (saving = saving.then(async () => {
+    for (let i = 0; i < 4; i++) {
+      try { const r = await api("/api/pick", { method: "POST", body: JSON.stringify(body) }); if (r.ok) return; } catch (_) {}
+      await new Promise((ok) => setTimeout(ok, 1000 * 2 ** i));
+    }
+    toast("Gagal menyimpan satu pilihan. Cek koneksi.");
+  }));
 
   function render(p) {
     current = p;
-    views.left = views.right = 0;
+    view = 0;
     showView("left"); showView("right");
     document.querySelectorAll(".card").forEach((b) => b.classList.remove("chosen"));
     $("msg").classList.add("hide"); $("pair").classList.remove("hide"); $("bar").classList.remove("hide");
@@ -188,7 +240,8 @@
     setTimeout(() => document.querySelectorAll(".pick").forEach((b) => (b.disabled = false)), 450);
     $("count").textContent = `${picks} pilihan · lihat skor →`;
     shownAt = performance.now();
-    next = fetchPair().catch(() => null);
+    photoUrls(p).reverse().forEach((u) => preload(u)); // this pair's photos jump the line
+    refill();
   }
 
   let toastTimer = null, canUndo = false;
@@ -209,13 +262,11 @@
     const body = { queue_id: current.queue_id, left_id: current.left_id, right_id: current.right_id,
       winner_id: winner, tie, ms: performance.now() - shownAt };
     try {
-      const r = await api("/api/pick", { method: "POST", body: JSON.stringify(body) });
-      if (!r.ok) throw new Error();
+      send(body);
       if (winner !== null || tie) picks++;
       canUndo = true; $("undo").disabled = false;
       toast(side === "skip" ? "Dilewati" : tie ? "Sama saja, tersimpan" : "Pilihan tersimpan");
-      const p = (await next) || (await fetchPair());
-      render(p);
+      render(await take());
     } catch (e) {
       if (!token) return;
       show(e.message || "Koneksi terputus. Mencoba lagi…");
@@ -236,7 +287,8 @@
       out.onclick = () => { store("rater", null); token = null; current = null; signIn(); };
       $("who").append(out);
       $("who").classList.remove("hide");
-      render(await fetchPair());
+      ahead = [];
+      render(await take());
     } catch (e) { if (e.message) show(e.message); }
   }
 
@@ -245,12 +297,15 @@
     if (busy || !canUndo) return;
     busy = true;
     try {
+      await saving; // the answer being undone must be saved first
       const r = await api("/api/undo", { method: "POST" });
       if (!r.ok) throw new Error();
       const p = await r.json();
       if (p.was_pick) picks = Math.max(0, picks - 1);
       canUndo = false; $("undo").disabled = true;
       $("toast").classList.add("hide");
+      if (current) ahead.unshift(Promise.resolve(current)); // the pair on screen comes back next
+      await Promise.all(photoUrls(p).map(preload));
       render(p);
     } catch (_) {
       toast("Tidak bisa dibatalkan");
@@ -265,7 +320,7 @@
   addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT" || e.metaKey || e.ctrlKey) return;
     const k = e.key.toLowerCase();
-    if (k === "arrowleft" || k === "arrowright") { flip("left", k === "arrowleft" ? -1 : 1); flip("right", k === "arrowleft" ? -1 : 1); }
+    if (k === "arrowleft" || k === "arrowright") { flip("left", k === "arrowleft" ? -1 : 1); }
     else if (k === "1") pick("left");
     else if (k === "2") pick("right");
     else if (k === "s" || k === " ") { e.preventDefault(); pick("skip"); }
