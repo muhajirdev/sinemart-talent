@@ -12,7 +12,10 @@ and a face scores by how close it sits to a peak, so going past the peak
     t_k(e) = h_k - |z - q_k|^2 / 2               height on hill k
     s(e)   = log sum_k exp t_k(e)                ~ height on the hill it's on
 
-Peaks q_k start at the k-means look centres and are then learned from picks.
+Peaks q_k start at the k-means look centres and are then learned from picks,
+so a peak can move away from its look's average face (attractive faces are
+not always average). By default every peak is equally tall (h_k = 0): the
+ideal face of any look ranks as high as the ideal face of any other.
 Three simpler heads are fitted on the same picks only as comparisons in the
 held-out report:
 
@@ -159,8 +162,15 @@ class HillsHead:
 
     name = "D_hills"
 
-    def __init__(self, looks: Looks, rank: int = 16, l2: float = 1e-3, steps: int = 500, lr: float = 2e-2, seed: int = 0):
+    def __init__(
+        self, looks: Looks, rank: int = 16, l2: float = 1e-3, steps: int = 500, lr: float = 2e-2, seed: int = 0,
+        equal_peaks: bool = True,
+    ):
         self.looks, self.rank, self.l2, self.steps, self.lr, self.seed = looks, rank, l2, steps, lr, seed
+        # equal_peaks: every look's ideal face counts as equally beautiful, so
+        # the best face of any look can reach the top. False lets picks make
+        # some hills taller than others (and can copy a bias in the picks).
+        self.equal_peaks = equal_peaks
 
     def _init(self, emb: np.ndarray):
         # Taste space starts as the top principal directions, scaled to unit
@@ -202,6 +212,8 @@ class HillsHead:
                 (pa[..., None] * da * ga[..., None]).sum(0) + (pb[..., None] * db * gb[..., None]).sum(0),
                 (pa * ga).sum(0) + (pb * gb).sum(0) + self.l2 * self.h,
             ]
+            if self.equal_peaks:
+                grads[2] = np.zeros_like(self.h)
             for i, (p, gr) in enumerate(zip(params, grads)):
                 m[i] = 0.9 * m[i] + 0.1 * gr
                 v[i] = 0.999 * v[i] + 0.001 * gr**2
@@ -216,15 +228,15 @@ class HillsHead:
         return self._terms(emb)[1].argmax(1)
 
 
-def hills_with_std(emb, winners, losers, looks: Looks, members: int = 5, seed: int = 0):
+def hills_with_std(emb, winners, losers, looks: Looks, members: int = 5, seed: int = 0, equal_peaks: bool = True):
     """Fit the hills model on every pick, plus a bootstrap ensemble whose
     spread is each face's score std (high = the model can't place it yet)."""
-    main = HillsHead(looks, seed=seed).fit(emb, winners, losers)
+    main = HillsHead(looks, seed=seed, equal_peaks=equal_peaks).fit(emb, winners, losers)
     rng = np.random.default_rng(seed)
     runs = []
     for i in range(members):
         idx = rng.integers(len(winners), size=len(winners))
-        s = HillsHead(looks, seed=seed + 1 + i).fit(emb, winners[idx], losers[idx]).score(emb)
+        s = HillsHead(looks, seed=seed + 1 + i, equal_peaks=equal_peaks).fit(emb, winners[idx], losers[idx]).score(emb)
         runs.append(s - s.mean())  # scores are only defined up to a shift
     return main, np.std(runs, axis=0)
 

@@ -19,7 +19,10 @@ Drive photos ──► crop/align/grey/gate ──► SigLIP 2 (or DINOv3) embed
   P(a beats b) = sigmoid(s(a) − s(b)), with
   `s(e) = log Σ_k exp(h_k − |P e − q_k|² / 2)` (`pipeline/sinemart/bt.py`,
   `HillsHead`). The peaks start at k-means look centres and then move with
-  the picks. The hills model always does the ranking and decides which pairs
+  the picks, because the most attractive face of a look isn't its average
+  face. Every peak is equally tall by default, so the best face of any look
+  can reach the top; `equal_peaks=False` lets the picks make some hills
+  taller. The hills model always does the ranking and decides which pairs
   are worth asking.
 - **Baselines, for comparison only:** a straight arrow (A), the arrow measured
   from each look's centre (B), and a small MLP (C). They sit next to the hills

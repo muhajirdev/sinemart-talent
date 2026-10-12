@@ -145,6 +145,15 @@ def test_hills_find_separate_peaks_per_look():
     assert len(set(hills.hill(emb).tolist())) == 3
 
 
+def test_equal_peaks_keeps_heights_fixed():
+    from sinemart.bt import HillsHead
+
+    emb, w, l, _ = synthetic(n=200, n_pairs=800)
+    looks = Looks.fit(emb, k=4)
+    assert np.allclose(HillsHead(looks, steps=50).fit(emb, w, l).h, 0)
+    assert not np.allclose(HillsHead(looks, steps=50, equal_peaks=False).fit(emb, w, l).h, 0)
+
+
 def test_hills_ensemble_std_is_positive():
     from sinemart.bt import hills_with_std
 

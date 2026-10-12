@@ -36,7 +36,7 @@ def load_picks(path: Path, id_to_idx: dict[int, int]):
     return np.asarray(w, np.int64), np.asarray(l, np.int64), dropped
 
 
-def run(npz: Path, picks: Path, out: Path, n_pairs: int = 2000, looks_k: int = 12, seed: int = 0):
+def run(npz: Path, picks: Path, out: Path, n_pairs: int = 2000, looks_k: int = 12, seed: int = 0, equal_peaks: bool = True):
     out.mkdir(parents=True, exist_ok=True)
     data = np.load(npz)
     ids, emb = data["ids"], data["emb"].astype(np.float64)
@@ -53,7 +53,7 @@ def run(npz: Path, picks: Path, out: Path, n_pairs: int = 2000, looks_k: int = 1
 
     hill = looks.labels
     if len(winners):
-        hills, std = hills_with_std(emb, winners, losers, looks, seed=seed)
+        hills, std = hills_with_std(emb, winners, losers, looks, seed=seed, equal_peaks=equal_peaks)
         scores, hill = hills.score(emb), hills.hill(emb)
         arrow = LinearHead(1.0).fit(emb, winners, losers).score(emb)
         report["bands"], report["band_peak"] = band_check(arrow, winners, losers)
