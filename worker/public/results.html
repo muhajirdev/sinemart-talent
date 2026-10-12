@@ -131,8 +131,7 @@
       <p class="note">${trained
         ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
         : "Learning starts after 5 picks."}
-        Retrains by itself every ${m.retrain_every} picks${trained ? ` (next in ${toNext})` : ""}.
-        Embeddings: ${esc(m.embedding || "–")}.</p>
+        Retrains by itself every ${m.retrain_every} picks${trained ? ` (next in ${toNext})` : ""}.</p>
       <p class="note">Score = how often (0–100) this face would win against an average applicant here.
         "Hill" = which look's peak the face is closest to.</p>
       <p style="margin:12px 0 0; display:flex; gap:10px; flex-wrap:wrap">

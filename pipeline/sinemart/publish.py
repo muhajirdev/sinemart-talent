@@ -94,7 +94,7 @@ def main(argv: list[str]) -> None:
                 "INSERT INTO applicants (id, image_key, stage, look, z, gender, gender_src) VALUES "
                 f"({aid}, {q('crops/' + main_crop[aid])}, {q(quality[aid]['stage'])}, {int(look[i])}, "
                 f"'{json.dumps(rnd(z[i]))}', {q(gender[aid]) if aid in gender else 'NULL'}, "
-                f"{q('siglip') if aid in gender else 'NULL'}) "
+                f"{q('auto') if aid in gender else 'NULL'}) "
                 # A gender someone fixed by hand on the scores page survives a reload.
                 "ON CONFLICT (id) DO UPDATE SET image_key = excluded.image_key, stage = excluded.stage, "
                 "look = excluded.look, z = excluded.z, score = NULL, score_std = NULL, model = NULL, "

@@ -157,7 +157,7 @@ async function results(env: Env, who: string | null) {
   if (model) delete model.init;
   return json({
     model: {
-      ...model, embedding: init?.model ?? null, hills: init?.peaks?.length ?? 0, peak_gender: init?.peak_gender ?? [],
+      ...model, hills: init?.peaks?.length ?? 0, peak_gender: init?.peak_gender ?? [],
       retrain_every: RETRAIN_EVERY,
     },
     picks,
