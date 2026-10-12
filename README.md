@@ -72,7 +72,7 @@ mkdir -p data && rclone lsjson -R --drive-shared-with-me "gdrive:Hasil Screening
 cd pipeline && pip install -r requirements.txt
 python -m sinemart.manifest ../data/listing.json ../data/manifest.csv
 rclone copy --drive-shared-with-me "gdrive:Hasil Screening COI 2021" ../data/photos \
-  --include "*Foto-Closeup*" --include "*Foto-Fullbody1*"
+  --include "*Foto-*.{jpg,jpeg,JPG,JPEG,png}"     # every photo; videos skipped
 ```
 
 ### 2. Crop, then embed
@@ -85,6 +85,12 @@ python -m sinemart.crop ../data/manifest.csv ../data/photos ../data/crops \
 python -m sinemart.embed ../data/crops siglip2 ../data/siglip2.npz
 python -m sinemart.embed ../data/crops dinov3  ../data/dinov3.npz   # challenger
 ```
+
+One person can have several photos (closeup, full-body 1 and 2). Every photo
+is cropped; each one whose face passes the gate is embedded, and a person's
+embedding is the average of theirs, so one odd photo moves their score less.
+Battles, scores and leaderboards are per person: raters see the face crop
+first and swipe (or tap the counter) to see that person's whole photos.
 
 Each crop is 512×512 with the eyes level and fixed in position, on grey. The
 gate rejects photos with no face, a face too small, blur, bad exposure, a
@@ -103,7 +109,8 @@ npx wrangler secret put ADMIN_TOKEN
 npx wrangler secret put TEAM_CODE               # the shared code on the team link
 python -m sinemart.publish ../data/siglip2.npz ../data/crops/quality.csv ../data/out   # from pipeline/
 npx wrangler d1 execute sinemart-talent --remote --file ../data/out/seed.sql
-rclone copy ../data/crops r2:sinemart-talent/crops --exclude "rejected/**" --include "*.jpg"
+rclone copy ../data/crops r2:sinemart-talent/crops --max-depth 1 --include "*.jpg"   # face crops
+rclone copy ../data/crops/photos r2:sinemart-talent/photos                          # whole photos
 npx wrangler deploy
 ```
 
