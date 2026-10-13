@@ -12,8 +12,10 @@
   const COLORS = ["#f5c542", "#4fc3f7", "#81c784", "#ff8a65", "#ce93d8"];
 
   // The five proportions the golden-ratio score uses, each with the two
-  // segments it compares (drawn solid and dashed).
-  function ratios(P, lang = "id") {
+  // segments it compares (drawn solid and dashed). `F` = the same points with
+  // the head straightened: values come from F when given, lines from P.
+  function ratios(P, lang = "id", F = null) {
+    const vals = F ? ratios(F, lang).map((r) => r.value) : null;
     const st = mid(P.lip_top, P.lip_bottom), pu = mid(P.pupil_r, P.pupil_l);
     const defs = [
       [[P.top, P.chin], [P.cheek_r, P.cheek_l]],
@@ -22,7 +24,7 @@
       [[P.eye_r_out, P.eye_l_out], [P.mouth_r, P.mouth_l]],
       [[pu, P.chin], [pu, P.top]],
     ];
-    return defs.map(([a, b], i) => ({ name: NAMES[lang][i], color: COLORS[i], a, b, value: d(...a) / d(...b) }));
+    return defs.map(([a, b], i) => ({ name: NAMES[lang][i], color: COLORS[i], a, b, value: vals ? vals[i] : d(...a) / d(...b) }));
   }
   // 0-100: how close a ratio is to 1.618 (100 = exactly, 0 = 50% or more off).
   const closeness = (v) => Math.max(0, Math.round(100 * (1 - Math.abs(Math.log(v / PHI)) / Math.log(1.5))));

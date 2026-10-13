@@ -30,3 +30,4 @@ CREATE TABLE IF NOT EXISTS face_points (
   yaw       REAL,                          -- head turn, degrees
   pitch     REAL
 );
+ALTER TABLE face_points ADD COLUMN front TEXT;

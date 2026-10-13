@@ -33,7 +33,8 @@
   .photo .geo { position: absolute; left: 8px; right: 8px; bottom: 26px; background: #000b; color: #fff; border-radius: 10px;
     padding: 5px 9px; font: 600 12px system-ui; text-align: center; pointer-events: none; }
   .photo svg.phi { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  #geoBtn[aria-pressed="true"] { color: var(--accent); }
+  #geoBtn, #visBtn { color: var(--muted) !important; }
+  #geoBtn[aria-pressed="true"], #visBtn[aria-pressed="true"] { color: var(--accent) !important; }
   .photo .dots { position: absolute; bottom: 10px; left: 0; right: 0; display: flex; gap: 6px; justify-content: center; pointer-events: none; }
   .photo .dots i { width: 7px; height: 7px; border-radius: 50%; background: #fff6; box-shadow: 0 0 2px #0008; }
   .photo .dots i.on { background: #fff; }
@@ -237,20 +238,27 @@
   // "Golden ratio" toggle: face-proportion numbers on each card (percentile
   // within the gender, 100 = closest to the rule's ideal). Off by default so
   // it doesn't steer picks; the choice is remembered on this phone.
-  let geoOn = load("geo") === "1", geo = null;
+  // Two switches: the numbers (geoOn) and the lines on the face (visOn).
+  let geoOn = load("geo") === "1", visOn = load("geovis") === "1", geo = null;
   async function setGeo(on) {
     geoOn = on; store("geo", on ? "1" : null);
-    $("geoBtn").textContent = `Golden ratio: ${on ? "on" : "off"}`;
+    $("geoBtn").textContent = `angka ${on ? "on" : "off"}`;
     $("geoBtn").setAttribute("aria-pressed", String(on));
     if (on && !geo) { try { geo = await (await api("/api/geometry")).json(); } catch (_) { geo = {}; } }
     showGeo();
   }
-  // With the toggle on, the face view (view 0) also gets the ratio lines.
+  function setVis(on) {
+    visOn = on; store("geovis", on ? "1" : null);
+    $("visBtn").textContent = `garis ${on ? "on" : "off"}`;
+    $("visBtn").setAttribute("aria-pressed", String(on));
+    showGeo();
+  }
+  // The face view (view 0) gets the ratio lines when that switch is on.
   function drawPhi(side) {
     const box = $(side).querySelector(".photo");
     box.querySelector("svg.phi")?.remove();
     const fp = current?.[side + "_points"];
-    if (geoOn && fp && views[side] === 0) box.querySelector("img").insertAdjacentHTML("afterend", Phi.svg(fp.points, "id"));
+    if (visOn && fp && views[side] === 0) box.querySelector("img").insertAdjacentHTML("afterend", Phi.svg(fp.points, "id"));
   }
   function showGeo() {
     for (const side of ["left", "right"]) {
@@ -324,8 +332,12 @@
       $("who").append(out);
       const gb = document.createElement("button");
       gb.id = "geoBtn"; gb.onclick = () => setGeo(!geoOn);
-      $("who").append(gb);
-      setGeo(geoOn);
+      const vb = document.createElement("button");
+      vb.id = "visBtn"; vb.onclick = () => setVis(!visOn);
+      const gl = document.createElement("span");
+      gl.textContent = " · Golden ratio:";
+      $("who").append(gl, gb, vb);
+      setGeo(geoOn); setVis(visOn);
       $("who").classList.remove("hide");
       ahead = [];
       render(await take());

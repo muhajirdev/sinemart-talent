@@ -160,6 +160,17 @@ m4 arcface, m5 siglip2l, m6 clipl, m7 pecore. Add another the same way with
 the next key. FaRL and ArcFace (InsightFace buffalo_l) weights are for research
 or non-commercial use only; check licences before using them beyond the prototype.
 
+### 6. Golden ratio (fixed face-geometry rule)
+
+```bash
+curl -L -o ../data/face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+python -m sinemart.facegeom ../data/crops ../data/face_landmarker.task ../data/gender.csv ../data/geo
+# apply ../data/geo/geometry.sql (tables geometry, face_points and the "Golden ratio" model), then retrain
+```
+
+Faces are straightened in 3D and the remaining head-angle effect is regressed
+out before measuring golden ratio, Pallett, symmetry and averageness.
+
 ## Tests
 
 ```bash

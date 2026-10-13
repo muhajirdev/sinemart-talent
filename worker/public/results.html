@@ -319,10 +319,10 @@
     if (!phiOn) { $("lbPhiList").innerHTML = ""; return; }
     if (fp === undefined) { $("lbPhiList").textContent = "Loading…"; return; }
     if (!fp) { $("lbPhiList").textContent = "No face points for this photo."; return; }
-    const turned = Math.abs(fp.yaw) > 20 || Math.abs(fp.pitch) > 20;
-    $("lbPhiList").innerHTML = Phi.ratios(fp.points, "en").map((r, i) =>
+    const turned = Math.abs(fp.yaw) > 35 || Math.abs(fp.pitch) > 35;
+    $("lbPhiList").innerHTML = Phi.ratios(fp.points, "en", fp.front).map((r, i) =>
       `<button data-i="${i}" aria-pressed="${lb.only === i}"><i style="background:${r.color}"></i>${r.name}: <b>${r.value.toFixed(2)}</b> (${Phi.closeness(r.value)})</button>`).join("")
-      + `<div style="width:100%;color:#aaa">Ideal 1.62. In brackets: closeness to it, 0–100. Solid line ÷ dashed line.${lb.v ? " Lines show on the face photo." : ""}${turned ? " Head is turned here, so the score left this photo out." : ""}</div>`;
+      + `<div style="width:100%;color:#aaa">Ideal 1.62. In brackets: closeness to it, 0–100. Solid line ÷ dashed line. Values are measured with the head turned to face forward.${lb.v ? " Lines show on the face photo." : ""}${turned ? " Head is turned too far here, so the score left this photo out." : ""}</div>`;
     $("lbPhiList").querySelectorAll("button").forEach((b) => (b.onclick = () => {
       const i = Number(b.dataset.i); lb.only = lb.only === i ? null : i; drawBoxPhi();
     }));

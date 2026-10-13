@@ -57,9 +57,9 @@ async function withPhotos(env: Env, pair: { queue_id: number | null; left_id: nu
 // Face points on a person's main face crop (what /img/<id> shows), or null.
 async function facePoints(env: Env, id: number) {
   const r = await env.DB.prepare(
-    "SELECT f.points, f.yaw, f.pitch FROM face_points f JOIN applicants a ON a.image_key = f.image_key WHERE a.id = ?1",
-  ).bind(id).first<{ points: string; yaw: number; pitch: number }>();
-  return r ? { points: JSON.parse(r.points), yaw: r.yaw, pitch: r.pitch } : null;
+    "SELECT f.points, f.front, f.yaw, f.pitch FROM face_points f JOIN applicants a ON a.image_key = f.image_key WHERE a.id = ?1",
+  ).bind(id).first<{ points: string; front: string | null; yaw: number; pitch: number }>();
+  return r ? { points: JSON.parse(r.points), front: r.front ? JSON.parse(r.front) : null, yaw: r.yaw, pitch: r.pitch } : null;
 }
 
 async function nextPair(env: Env, who: Rater) {

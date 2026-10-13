@@ -129,7 +129,8 @@ CREATE TABLE IF NOT EXISTS geometry (
 -- fractions of the crop, so the pages can draw the golden-ratio lines.
 CREATE TABLE IF NOT EXISTS face_points (
   image_key TEXT PRIMARY KEY,              -- R2 key of the crop, as in applicants.image_key
-  points    TEXT NOT NULL,                 -- JSON {name: [x, y]}
+  points    TEXT NOT NULL,                 -- JSON {name: [x, y]}, as seen in the photo (lines are drawn here)
+  front     TEXT,                          -- the same points with the head straightened (numbers come from these)
   yaw       REAL,                          -- head turn, degrees
   pitch     REAL
 );
