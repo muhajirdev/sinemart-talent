@@ -51,6 +51,7 @@
   .legend { display: flex; flex-wrap: wrap; gap: 10px 16px; font-size: 13px; color: var(--muted); margin-top: 8px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--c); margin-right: 6px; vertical-align: -1px; }
   .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .chips[hidden] { display: none; }
   .chips button { background: var(--card); color: var(--fg); border: 1px solid #444; font-weight: 500; padding: 6px 14px; }
   .cmp { border-collapse: collapse; margin: 12px 0 4px; font-size: 14px; font-variant-numeric: tabular-nums; }
   .cmp th, .cmp td { padding: 4px 14px 4px 0; text-align: left; }
@@ -63,7 +64,7 @@
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #3a3a3a; }
   th { color: var(--muted); font-weight: 500; font-size: 13px; }
   .scroll { overflow-x: auto; }
-  .lb { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.9); display: flex; flex-direction: column;
+  .lb { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.97); display: flex; flex-direction: column;
     align-items: center; justify-content: center; padding: 16px; touch-action: pan-y; }
   .lb[hidden] { display: none; }
   .lb .stage { position: relative; width: min(92vw, 640px); height: min(70vh, 720px); display: flex; align-items: center; justify-content: center; }
@@ -155,14 +156,15 @@
     }
     $("model").innerHTML = `
       <div class="stats">
-        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "hills" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, many clusters)"} · ${state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
+        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "hills" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, many clusters)"} · ${isRule(m.mode, m.alternates) ? "face proportions, symmetry and averageness; no clusters" : state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
         <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.total - p.decided} skipped)</span></div>
         <div class="stat"><b>${pct(m.heldout_line)}</b><span>Model 1 straight arrow: held-out agreement</span></div>
       </div>
       <table class="cmp"><thead><tr><th>Held-out agreement</th><th>Many clusters</th><th>One cluster</th></tr></thead><tbody>
-        ${[["Model 1", m.heldout_hills, m.heldout_one], ...(m.alternates || []).map((a, i) => [`Model ${i + 2}`, a.heldout, a.heldout_one])]
+        ${[["Model 1", m.heldout_hills, m.heldout_one], ...(m.alternates || []).filter((a) => a.has_z).map((a) => [altName(a.key, m.alternates), a.heldout, a.heldout_one])]
           .map(([n, a, b]) => `<tr><td>${n}</td><td>${pct(a)}</td><td>${pct(b)}</td></tr>`).join("")}
-        ${(m.alternates || []).map((a, i) => a.has_fixed ? `<tr><td>Model ${i + 2} fixed rule</td><td colspan="2">${pct(a.heldout_fixed)} <span class="label">(not trained on picks)</span></td></tr>` : "").join("")}
+        ${(m.alternates || []).filter((a) => a.has_fixed).map((a) => `<tr><td>${a.has_z ? altName(a.key, m.alternates) + " fixed rule" : altName(a.key, m.alternates)}</td>
+          <td colspan="2">${pct(a.heldout_fixed)} <span style="color:var(--muted)">(fixed rule, not trained on picks)</span></td></tr>`).join("")}
       </tbody></table>
       <p class="note">${trained
         ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
@@ -199,9 +201,15 @@
   const hc = (k) => `h${(local(k) % 8) + 1}c`; // fixed palette order; labels carry identity past 8
   const hn = (k) => `Cluster ${local(k) + 1}`;
   const gname = { f: "Cewek", m: "Cowok" };
+  // Comparison models are numbered from 2; a fixed rule with no taste space
+  // (the face-geometry score) is called "Golden ratio" instead.
+  const isRule = (key, alts) => (alts || []).some((a) => a.key === key && !a.has_z);
+  const altName = (key, alts) => isRule(key, alts) ? "Golden ratio"
+    : `Model ${(alts || []).filter((a) => a.has_z).findIndex((a) => a.key === key) + 2}`;
   const modeName = (mode, alts) => mode === "one" ? "Model 1 · one cluster"
     : !mode || mode === "hills" ? "Model 1 · many clusters"
-    : `Model ${(alts || []).findIndex((a) => a.key === mode.split(":")[0]) + 2} · ${mode.endsWith(":one") ? "one cluster" : "many clusters"}`;
+    : isRule(mode, alts) ? "Golden ratio"
+    : `${altName(mode.split(":")[0], alts)} · ${mode.endsWith(":one") ? "one cluster" : "many clusters"}`;
   const battles = (f) => (f.games ? `Won ${f.wins} of ${f.games} battle${f.games === 1 ? "" : "s"}` : "No battles yet");
   // How settled the score is: the spread between retrains on resampled picks.
   const certainty = (f) => {
@@ -211,8 +219,26 @@
   };
   const beatOf = (f) => (f.score == null ? null : 1 / (1 + Math.exp(-(f.score - state.mean))));
 
+  // Face-geometry data points, as a percentile within the group shown
+  // (100 = closest to that rule's ideal). "–" = no frontal enough photo.
+  const GEO = [["phi_dev", "Golden ratio"], ["asymmetry", "Symmetry"], ["atypicality", "Averageness"], ["pallett_dev", "Pallett"]];
+  function geoPercentiles(faces) {
+    const out = new Map(faces.map((f) => [f.id, {}]));
+    for (const [k] of GEO) {
+      const have = faces.filter((f) => f[k] != null).sort((a, b) => b[k] - a[k]); // worst first
+      have.forEach((f, i) => (out.get(f.id)[k] = have.length > 1 ? Math.round((i / (have.length - 1)) * 100) : 50));
+    }
+    return out;
+  }
+  const geoLine = (f) => {
+    const g = state.geo?.get(f.id) || {};
+    return `<span title="Percentile within ${gname[state.gender] || "the group"} by fixed face rules (100 = closest to the rule's ideal). – = no frontal photo to measure.">`
+      + GEO.map(([k, n]) => `${n} ${g[k] ?? "–"}`).join(" · ") + "</span>";
+  };
+
   function renderBoard() {
     const d = state.d;
+    state.geo = geoPercentiles(d.faces);
     const hills = [...new Set(d.faces.map((f) => f.look).filter((x) => x != null))].sort((a, b) => a - b);
     $("boardTitle").hidden = false;
     $("chips").innerHTML = [["all", "All"], ...hills.map((k) => [String(k), hn(k)])]
@@ -231,6 +257,7 @@
           <div class="meta">#${f.id} · ${f.look == null ? "no cluster" : `<span class="tag ${hc(f.look)}">${hn(f.look)}</span>`}${f.gender ? ` · ${gname[f.gender]}${f.gender_src === "manual" ? " (fixed)" : ""}
               <button class="gfix" data-id="${f.id}" data-g="${f.gender === "f" ? "m" : "f"}">wrong? move to ${gname[f.gender === "f" ? "m" : "f"]}</button>` : ""}</div>
           <div class="meta">${battles(f)}${f.n_photos > 1 ? ` · ${f.n_photos} photos` : ""}${certainty(f)}</div>
+          <div class="meta">${geoLine(f)}</div>
         </div></li>`;
     }).join("");
     $("faces").querySelectorAll(".gfix").forEach((b) => (b.onclick = async () => {
@@ -266,7 +293,7 @@
     $("lbPrev").hidden = $("lbNext").hidden = lb.n < 2;
     $("lbDots").innerHTML = lb.n < 2 ? "" : Array.from({ length: lb.n }, (_, k) => `<i class="${k === lb.v ? "on" : ""}"></i>`).join("");
     $("lbCap").innerHTML = `<b>#${f.id}</b> · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${lb.rank}`}
-      · ${f.look == null ? "no cluster" : hn(f.look)}<br>${battles(f)}${certainty(f)}
+      · ${f.look == null ? "no cluster" : hn(f.look)}<br>${battles(f)}${certainty(f)}<br>${geoLine(f)}
       <div class="label">${lb.v === 0 ? "Face" : `Photo ${lb.v} of ${lb.n - 1}`}</div>`;
   }
   const flipBox = (step) => { if (lb.n > 1) { lb.v = (lb.v + step + lb.n) % lb.n; showBox(); } };
@@ -475,13 +502,14 @@
   function renderModes(alts) {
     const model = state.mode === "hills" || state.mode === "one" ? "1" : state.mode.split(":")[0];
     const c = state.mode === "one" || state.mode.endsWith(":one") ? "one" : "many";
-    const models = [["1", "Model 1"], ...(alts || []).map((a, i) => [a.key, `Model ${i + 2}`])];
+    const models = [["1", "Model 1"], ...(alts || []).filter((a) => a.has_z).map((a) => [a.key, altName(a.key, alts)]),
+      ...(alts || []).filter((a) => !a.has_z).map((a) => [a.key, altName(a.key, alts)])];
     $("msw").innerHTML = models.map(([v, l]) => `<button data-m="${v}" aria-pressed="${model === v}">${l}</button>`).join("");
     $("msw").querySelectorAll("button").forEach((b) => (b.onclick = () => {
-      state.mode = modeOf(b.dataset.m, c); state.filter = "all";
+      state.mode = isRule(b.dataset.m, alts) ? b.dataset.m : modeOf(b.dataset.m, c); state.filter = "all";
       load();
     }));
-    $("csw").hidden = false;
+    $("csw").hidden = isRule(model, alts); // a fixed rule has no clusters
     $("csw").querySelectorAll("button").forEach((b) => {
       b.setAttribute("aria-pressed", String(b.dataset.c === c));
       b.onclick = () => { state.mode = modeOf(model, b.dataset.c); state.filter = "all"; load(); };

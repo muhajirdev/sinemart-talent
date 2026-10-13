@@ -147,7 +147,8 @@ async function results(env: Env, who: string | null, mode: string | null = null)
      FROM model WHERE id = 1`,
   ).first<Record<string, unknown>>();
   const oneParams = model?.params_one as string | null;
-  const alternates = (await env.DB.prepare("SELECT key, heldout, heldout_one, heldout_fixed, fixed IS NOT NULL AS has_fixed, n_picks FROM alt_models ORDER BY key").all()).results;
+  const alternates = (await env.DB.prepare(`SELECT key, heldout, heldout_one, heldout_fixed, fixed IS NOT NULL AS has_fixed,
+       EXISTS (SELECT 1 FROM alt_z z WHERE z.key = m.key) AS has_z, n_picks FROM alt_models m ORDER BY key`).all()).results;
   if (model) delete model.params_one;
   const picks = await env.DB.prepare(
     `SELECT COUNT(*) AS decided, SUM(tie) AS ties, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters
@@ -157,8 +158,9 @@ async function results(env: Env, who: string | null, mode: string | null = null)
     `SELECT a.id, a.score, a.score_std, a.look, a.gender, a.gender_src,
        (SELECT COUNT(*) FROM picks p WHERE p.winner_id = a.id) AS wins,
        (SELECT COUNT(*) FROM picks p WHERE (p.winner_id IS NOT NULL OR p.tie = 1) AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
-       (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos
-     FROM applicants a ORDER BY a.score DESC NULLS LAST, a.id`,
+       (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos,
+       g.phi_dev, g.pallett_dev, g.asymmetry, g.atypicality
+     FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id ORDER BY a.score DESC NULLS LAST, a.id`,
   ).all<Record<string, unknown>>();
   let peakGender: (string | null)[] | null = null;
   if (mode && mode !== "one" && mode !== "hills") {
@@ -169,7 +171,10 @@ async function results(env: Env, who: string | null, mode: string | null = null)
     const params = variant === "one" ? alt?.paramsOne : alt?.params;
     const h = params ? hillsFrom(JSON.parse(params)) : null;
     peakGender = h ? h.pg : alt ? (alt.init.peak_gender ?? []) : [];
-    for (const f of faces) {
+    if (alt && !alt.zs.size && alt.fixed) {
+      // A fixed rule ("Golden ratio"): no clusters, ranked by its own score.
+      for (const f of faces) { f.score = alt.fixed[f.id as number] ?? null; f.look = null; f.score_std = null; }
+    } else for (const f of faces) {
       const z = alt?.zs.get(f.id as number), g = f.gender as string | null;
       f.score = h && z ? h.score(z, g) : null;
       f.look = h && z ? h.hill(z, g) : null;
@@ -218,6 +223,10 @@ async function raterResults(env: Env, who: string) {
     (await env.DB.prepare("SELECT applicant_id AS id, COUNT(*) AS n FROM photos GROUP BY applicant_id").all<{ id: number; n: number }>())
       .results.map((r) => [r.id, r.n]),
   );
+  const geo = new Map(
+    (await env.DB.prepare("SELECT applicant_id AS id, phi_dev, pallett_dev, asymmetry, atypicality FROM geometry").all<Record<string, number>>())
+      .results.map(({ id, ...g }) => [id, g]),
+  );
   const wins = new Map<number, number>(), games = new Map<number, number>();
   for (const p of data.picks) {
     const [w, l] = [data.faces[p.w].id, data.faces[p.l].id];
@@ -236,6 +245,7 @@ async function raterResults(env: Env, who: string) {
       wins: wins.get(f.id) ?? 0,
       games: games.get(f.id) ?? 0,
       n_photos: photoCount.get(f.id) ?? 0,
+      ...geo.get(f.id),
     }))
     .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity) || a.id - b.id);
   return json({
@@ -311,7 +321,7 @@ export default {
         }
         const [key, variant] = mode.split(":");
         const alt = await loadAlternate(env, key);
-        if (!alt) return json({ faces: [], peaks: [], grid: null });
+        if (!alt || !alt.zs.size) return json({ faces: [], peaks: [], grid: null }); // a fixed rule has no map
         const params = variant === "one" ? alt.paramsOne : alt.params;
         return json(await territory(env, { params, faces, zs: alt.zs, init: alt.init }, gender));
       }

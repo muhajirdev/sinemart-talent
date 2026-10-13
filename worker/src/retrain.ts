@@ -108,14 +108,21 @@ async function fitAlternates(
   const stmts: D1PreparedStatement[] = [];
   for (const { key } of keys) {
     const alt = await loadAlternate(env, key);
-    if (!alt || faces.some((f) => !alt.zs.has(f.id))) continue; // must cover everyone
-    const Z = faces.map((f) => alt.zs.get(f.id)!);
-    const fresh = () => new Hills(alt.init.peaks, alt.init.peak_gender ?? []);
+    if (!alt) continue;
     let heldout: number | null = null, heldoutOne: number | null = null, heldoutFixed: number | null = null;
     if (test.length >= 3 && alt.fixed) {
       // A never-trained score (missing people count as average, 0).
       heldoutFixed = agreement(faces.map((f) => alt.fixed![f.id] ?? 0), test);
     }
+    if (faces.some((f) => !alt.zs.has(f.id))) {
+      // No taste space (a fixed rule only), or it doesn't cover everyone.
+      stmts.push(env.DB.prepare(
+        "UPDATE alt_models SET heldout_fixed = ?1, n_picks = ?2, trained_at = datetime('now') WHERE key = ?3",
+      ).bind(heldoutFixed, picks.length, key));
+      continue;
+    }
+    const Z = faces.map((f) => alt.zs.get(f.id)!);
+    const fresh = () => new Hills(alt.init.peaks, alt.init.peak_gender ?? []);
     if (train.length >= MIN_PICKS && test.length >= 3) {
       const h = fresh().fit(Z, train, G);
       heldout = agreement(Z.map((z, i) => h.score(z, G[i])), test);

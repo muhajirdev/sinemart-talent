@@ -111,3 +111,16 @@ CREATE TABLE IF NOT EXISTS alt_z (
   z            TEXT NOT NULL,
   PRIMARY KEY (key, applicant_id)
 );
+
+-- Fixed face-geometry measurements (pipeline sinemart.geometry), one row per
+-- applicant with a frontal enough photo. Lower = closer to the rule's ideal;
+-- score = the combined "Golden ratio" ranking (higher = more ideal).
+CREATE TABLE IF NOT EXISTS geometry (
+  applicant_id INTEGER PRIMARY KEY,
+  n_photos     INTEGER,
+  score        REAL,
+  phi_dev      REAL,                         -- distance from the golden ratio
+  pallett_dev  REAL,                         -- distance from Pallett's 36% / 46%
+  asymmetry    REAL,
+  atypicality  REAL                          -- distance from the average face (averageness, reversed)
+);
