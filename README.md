@@ -166,16 +166,13 @@ or non-commercial use only; check licences before using them beyond the prototyp
 curl -L -o ../data/face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 python -m sinemart.facegeom ../data/crops ../data/face_landmarker.task ../data/gender.csv ../data/geo
 # apply ../data/geo/geometry.sql (tables geometry, face_points and the two golden-ratio models), then retrain
-# upload ../data/geo/front/*.jpg to R2 as front/<name> (served at /img/<id>/front)
 ```
 
 Faces are straightened in 3D and the remaining head-angle effect is regressed
 out before measuring golden ratio, Pallett, symmetry and averageness
 ("Golden ratio · straightened", key `geo`). The same measures on the points as
 they sit in the photo give "Golden ratio · original" (key `geo_raw`) for
-comparison. `front/` holds each face crop warped to look straight ahead (the
-hidden side of a turned face is filled from its mirror); the scores page
-lightbox shows it after the original face.
+comparison.
 
 ## Tests
 

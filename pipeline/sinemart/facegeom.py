@@ -33,9 +33,7 @@ For comparison the same four measures are also taken on the points as they
 sit in the photo (no straightening, no correction): fixed model ``geo_raw``.
 
 Writes OUT_DIR/geometry.sql (tables ``geometry`` and ``face_points`` and the
-fixed models ``geo`` and ``geo_raw``), OUT_DIR/geometry.csv, and
-OUT_DIR/front/<crop>: each crop warped so the face looks straight ahead
-(uploaded to R2 under front/).
+fixed models ``geo`` and ``geo_raw``) and OUT_DIR/geometry.csv.
 """
 
 from __future__ import annotations
@@ -298,81 +296,6 @@ def per_person(recs, gender: dict[int, str], pts: str = "front") -> list[dict]:
     return rows
 
 
-def warp(img: np.ndarray, src: np.ndarray, dst: np.ndarray, tris: np.ndarray, pairs: np.ndarray) -> np.ndarray:
-    """The photo with the face moved from ``src`` to ``dst`` (468x2 pixels each).
-
-    Piecewise affine: the face mesh triangles carry the face; a Delaunay mesh
-    over all points plus the image border carries hair and background along.
-    Where the head was turned, the far side of the face is squeezed or hidden,
-    so those triangles borrow their mirror partner from the visible side,
-    blended softly.
-    """
-    import cv2
-
-    h, w = img.shape[:2]
-    border = np.array([[0, 0], [w / 2, 0], [w - 1, 0], [w - 1, h / 2], [w - 1, h - 1],
-                       [w / 2, h - 1], [0, h - 1], [0, h / 2]], float)
-    s_all, d_all = np.vstack([src, border]), np.vstack([dst, border])
-    sub = cv2.Subdiv2D((-w, -h, 3 * w, 3 * h))
-    for p in d_all:
-        sub.insert((float(p[0]), float(p[1])))
-    dtri = []
-    for t in sub.getTriangleList().reshape(-1, 3, 2):
-        dd = np.linalg.norm(d_all[None] - t[:, None], axis=2)
-        if dd.min(1).max() < 0.5:
-            dtri.append(dd.argmin(1))
-
-    def area(p, t):
-        return 0.5 * ((p[t[1], 0] - p[t[0], 0]) * (p[t[2], 1] - p[t[0], 1])
-                      - (p[t[2], 0] - p[t[0], 0]) * (p[t[1], 1] - p[t[0], 1]))
-
-    # How much of each triangle the photo shows (vs straightened), for it and its mirror.
-    seen = np.array([area(src, t) / (area(dst, t) or 1e-9) for t in tris])
-    seen_m = np.array([-area(src, pairs[t]) / (area(dst, t) or 1e-9) for t in tris])
-    w_own = np.clip((seen / np.maximum(seen_m, 1e-6) - 0.25) / 0.5, 0, 1)
-    w_own[seen_m <= 0] = 1
-
-    ys, xs = np.mgrid[0:h, 0:w]
-
-    def maps(pieces):
-        mx, my = np.zeros((h, w), np.float32), np.zeros((h, w), np.float32)
-        tid = np.full((h, w), -1, np.int32)
-        for k, (dt, _) in enumerate(pieces):
-            cv2.fillConvexPoly(tid, np.round(dt).astype(np.int32), k)
-        for k, (dt, st) in enumerate(pieces):
-            sel = tid == k
-            if sel.any():
-                a = cv2.getAffineTransform(dt.astype(np.float32), st.astype(np.float32))
-                mx[sel] = a[0, 0] * xs[sel] + a[0, 1] * ys[sel] + a[0, 2]
-                my[sel] = a[1, 0] * xs[sel] + a[1, 1] * ys[sel] + a[1, 2]
-        return mx, my, tid
-
-    def remap(m):
-        return cv2.remap(img, m[0], m[1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
-                         borderValue=(128, 128, 128)).astype(np.float32)
-
-    bg = remap(maps([(d_all[t], s_all[t]) for t in dtri]))
-    own = maps([(dst[t], src[t]) for t in tris])
-    k = max(3, (w // 40) | 1)
-    wmap = cv2.GaussianBlur(np.where(own[2] >= 0, w_own[np.maximum(own[2], 0)], 1).astype(np.float32), (k, k), 0)
-    face = remap(own) * wmap[..., None] + remap(maps([(dst[t], src[pairs[t]]) for t in tris])) * (1 - wmap[..., None])
-    alpha = cv2.GaussianBlur(cv2.erode((own[2] >= 0).astype(np.float32), np.ones((3, 3))), (5, 5), 0)[..., None]
-    return np.clip(face * alpha + bg * (1 - alpha), 0, 255).astype(np.uint8)
-
-
-def write_warped(recs, crop_dir: Path, model_path: str, out: Path) -> None:
-    """OUT/front/<crop name>: every crop with its face straightened."""
-    import cv2
-
-    ref, tris = canonical_mesh(model_path)
-    pairs = mirror_pairs(ref[:, :2])
-    (out / "front").mkdir(parents=True, exist_ok=True)
-    for r in recs:
-        img = cv2.imread(str(crop_dir / r["name"]))
-        img = warp(img, r["raw"][:N_MESH], r["front"][:N_MESH], tris, pairs)
-        cv2.imwrite(str(out / "front" / r["name"]), img, [cv2.IMWRITE_JPEG_QUALITY, 88])
-
-
 def write(recs, rows, raw_rows, out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     with open(out / "geometry.csv", "w", newline="") as f:
@@ -410,7 +333,6 @@ def main(argv: list[str]) -> None:
     recs = measure(detect(Path(argv[1]), argv[2]), gender, canonical_face(argv[2]))
     rows = per_person(recs, gender)
     write(recs, rows, per_person(recs, gender, "raw"), Path(argv[4]))
-    write_warped(recs, Path(argv[1]), argv[2], Path(argv[4]))
     n_ok = sum(r["ok"] for r in recs)
     print(f"{n_ok}/{len(recs)} crops measured (straightened), {len(rows)} applicants")
 
