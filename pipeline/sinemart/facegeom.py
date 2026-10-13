@@ -29,8 +29,13 @@ Lower is closer to the ideal for all four; ``score`` is the mean of their
 negated z-scores (higher = more ideal). Faces turned more than MAX_POSE_DEG
 are left out, since the hidden side of the face is guessed, not seen.
 
+For comparison the same four measures are also taken on the points as they
+sit in the photo (no straightening, no correction): fixed model ``geo_raw``.
+
 Writes OUT_DIR/geometry.sql (tables ``geometry`` and ``face_points`` and the
-"Golden ratio" fixed model) and OUT_DIR/geometry.csv.
+fixed models ``geo`` and ``geo_raw``), OUT_DIR/geometry.csv, and
+OUT_DIR/front/<crop>: each crop warped so the face looks straight ahead
+(uploaded to R2 under front/).
 """
 
 from __future__ import annotations
@@ -68,11 +73,16 @@ def pose(mat: np.ndarray) -> tuple[float, float]:
 
 
 def canonical_face(model_path: str) -> np.ndarray:
-    """MediaPipe's frontal reference face (468x3; x right, y up, z to the viewer).
+    """MediaPipe's frontal reference face (468x3; x right, y up, z to the viewer)."""
+    return canonical_mesh(model_path)[0]
+
+
+def canonical_mesh(model_path: str) -> tuple[np.ndarray, np.ndarray]:
+    """MediaPipe's frontal reference face and its triangles (468x3, Tx3).
 
     It sits in the .task bundle as geometry_pipeline_metadata_landmarks.binarypb:
     field 1 (canonical mesh) holds the vertex buffer as repeated float32 field 3,
-    five floats per vertex (x, y, z, u, v).
+    five floats per vertex (x, y, z, u, v), and the triangle indices as field 4.
     """
     import struct
     import zipfile
@@ -109,7 +119,16 @@ def canonical_face(model_path: str) -> np.ndarray:
 
     mesh = next(v for f, _, v in fields(blob) if f == 1)
     floats = [struct.unpack("<f", v)[0] for f, t, v in fields(mesh) if f == 3 and t == 5]
-    return np.array(floats).reshape(N_MESH, 5)[:, :3]
+    idx = []
+    for f, t, v in fields(mesh):
+        if f == 4 and t == 0:
+            idx.append(v)
+        elif f == 4 and t == 2:  # packed
+            i = 0
+            while i < len(v):
+                x, i = varint(v, i)
+                idx.append(x)
+    return np.array(floats).reshape(N_MESH, 5)[:, :3], np.array(idx).reshape(-1, 3)
 
 
 def straighten(mesh: np.ndarray, ref: np.ndarray, size: tuple[int, int]) -> np.ndarray:
@@ -223,7 +242,12 @@ def detect(crop_dir: Path, model_path: str):
 
 
 def measure(faces, gender: dict[int, str], ref: np.ndarray):
-    """Per-crop records with straightened points and the four (pose-corrected) measures."""
+    """Per-crop records: raw and straightened points, plus both sets of measures.
+
+    ``r["front"]`` / ``r["m_front"]``: straightened points, pose-corrected measures
+    (the main score). ``r["raw"]`` / ``r["m_raw"]``: the points as they sit in the
+    photo, measured as is (the "original" score, for comparison).
+    """
     recs = []
     for name, mesh, mat, size in faces:
         yaw, pitch = pose(mat)
@@ -233,33 +257,40 @@ def measure(faces, gender: dict[int, str], ref: np.ndarray):
         rec["ok"] = abs(yaw) <= MAX_POSE_DEG and abs(pitch) <= MAX_POSE_DEG
         recs.append(rec)
     ok = [r for r in recs if r["ok"]]
+    _measure(ok, gender, "front", correct=True)
+    _measure(ok, gender, "raw", correct=False)
+    return recs
+
+
+def _measure(ok, gender: dict[int, str], pts: str, correct: bool) -> None:
     pairs = mirror_pairs(mean_shape([r["front"][:N_MESH] for r in ok]))
-    refs = {g: mean_shape([r["front"][:N_MESH] for r in ok if gender.get(r["id"], "") == g])
+    refs = {g: mean_shape([r[pts][:N_MESH] for r in ok if gender.get(r["id"], "") == g])
             for g in {gender.get(r["id"], "") for r in ok}}
     for r in ok:
-        rt = ratios(r["front"])
-        r["ratios"] = rt
-        r["phi_dev"], r["pallett_dev"] = phi_dev(rt), pallett_dev(rt)
-        r["asymmetry"] = asymmetry(r["front"], pairs)
+        p = r[pts]
+        rt = ratios(p)
         g_ref = refs[gender.get(r["id"], "")]
-        r["atypicality"] = float(np.linalg.norm(align(r["front"][:N_MESH], g_ref) - g_ref))
-    yaw, pitch = np.array([r["yaw"] for r in ok]), np.array([r["pitch"] for r in ok])
-    for m in MEASURES:
-        for r, v in zip(ok, pose_corrected(np.array([r[m] for r in ok]), yaw, pitch)):
-            r[m] = float(v)
-    return recs
+        r["m_" + pts] = {
+            "phi_dev": phi_dev(rt), "pallett_dev": pallett_dev(rt), "asymmetry": asymmetry(p, pairs),
+            "atypicality": float(np.linalg.norm(align(p[:N_MESH], g_ref) - g_ref)),
+        }
+    if correct:
+        yaw, pitch = np.array([r["yaw"] for r in ok]), np.array([r["pitch"] for r in ok])
+        for m in MEASURES:
+            for r, v in zip(ok, pose_corrected(np.array([r["m_" + pts][m] for r in ok]), yaw, pitch)):
+                r["m_" + pts][m] = float(v)
 
 
 MEASURES = ["phi_dev", "pallett_dev", "asymmetry", "atypicality"]
 
 
-def per_person(recs, gender: dict[int, str]) -> list[dict]:
+def per_person(recs, gender: dict[int, str], pts: str = "front") -> list[dict]:
     ok = [r for r in recs if r["ok"]]
     rows = []
     for aid in sorted({r["id"] for r in ok}):
         mine = [r for r in ok if r["id"] == aid]
         row = {"applicant_id": aid, "gender": gender.get(aid, ""), "n_photos": len(mine)}
-        row.update({m: float(np.mean([r[m] for r in mine])) for m in MEASURES})
+        row.update({m: float(np.mean([r["m_" + pts][m] for r in mine])) for m in MEASURES})
         rows.append(row)
     combo = -np.mean([zscore(np.array([r[m] for r in rows])) for m in MEASURES], axis=0)
     for row, s in zip(rows, combo):
@@ -267,7 +298,82 @@ def per_person(recs, gender: dict[int, str]) -> list[dict]:
     return rows
 
 
-def write(recs, rows, out: Path) -> None:
+def warp(img: np.ndarray, src: np.ndarray, dst: np.ndarray, tris: np.ndarray, pairs: np.ndarray) -> np.ndarray:
+    """The photo with the face moved from ``src`` to ``dst`` (468x2 pixels each).
+
+    Piecewise affine: the face mesh triangles carry the face; a Delaunay mesh
+    over all points plus the image border carries hair and background along.
+    Where the head was turned, the far side of the face is squeezed or hidden,
+    so those triangles borrow their mirror partner from the visible side,
+    blended softly.
+    """
+    import cv2
+
+    h, w = img.shape[:2]
+    border = np.array([[0, 0], [w / 2, 0], [w - 1, 0], [w - 1, h / 2], [w - 1, h - 1],
+                       [w / 2, h - 1], [0, h - 1], [0, h / 2]], float)
+    s_all, d_all = np.vstack([src, border]), np.vstack([dst, border])
+    sub = cv2.Subdiv2D((-w, -h, 3 * w, 3 * h))
+    for p in d_all:
+        sub.insert((float(p[0]), float(p[1])))
+    dtri = []
+    for t in sub.getTriangleList().reshape(-1, 3, 2):
+        dd = np.linalg.norm(d_all[None] - t[:, None], axis=2)
+        if dd.min(1).max() < 0.5:
+            dtri.append(dd.argmin(1))
+
+    def area(p, t):
+        return 0.5 * ((p[t[1], 0] - p[t[0], 0]) * (p[t[2], 1] - p[t[0], 1])
+                      - (p[t[2], 0] - p[t[0], 0]) * (p[t[1], 1] - p[t[0], 1]))
+
+    # How much of each triangle the photo shows (vs straightened), for it and its mirror.
+    seen = np.array([area(src, t) / (area(dst, t) or 1e-9) for t in tris])
+    seen_m = np.array([-area(src, pairs[t]) / (area(dst, t) or 1e-9) for t in tris])
+    w_own = np.clip((seen / np.maximum(seen_m, 1e-6) - 0.25) / 0.5, 0, 1)
+    w_own[seen_m <= 0] = 1
+
+    ys, xs = np.mgrid[0:h, 0:w]
+
+    def maps(pieces):
+        mx, my = np.zeros((h, w), np.float32), np.zeros((h, w), np.float32)
+        tid = np.full((h, w), -1, np.int32)
+        for k, (dt, _) in enumerate(pieces):
+            cv2.fillConvexPoly(tid, np.round(dt).astype(np.int32), k)
+        for k, (dt, st) in enumerate(pieces):
+            sel = tid == k
+            if sel.any():
+                a = cv2.getAffineTransform(dt.astype(np.float32), st.astype(np.float32))
+                mx[sel] = a[0, 0] * xs[sel] + a[0, 1] * ys[sel] + a[0, 2]
+                my[sel] = a[1, 0] * xs[sel] + a[1, 1] * ys[sel] + a[1, 2]
+        return mx, my, tid
+
+    def remap(m):
+        return cv2.remap(img, m[0], m[1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                         borderValue=(128, 128, 128)).astype(np.float32)
+
+    bg = remap(maps([(d_all[t], s_all[t]) for t in dtri]))
+    own = maps([(dst[t], src[t]) for t in tris])
+    k = max(3, (w // 40) | 1)
+    wmap = cv2.GaussianBlur(np.where(own[2] >= 0, w_own[np.maximum(own[2], 0)], 1).astype(np.float32), (k, k), 0)
+    face = remap(own) * wmap[..., None] + remap(maps([(dst[t], src[pairs[t]]) for t in tris])) * (1 - wmap[..., None])
+    alpha = cv2.GaussianBlur(cv2.erode((own[2] >= 0).astype(np.float32), np.ones((3, 3))), (5, 5), 0)[..., None]
+    return np.clip(face * alpha + bg * (1 - alpha), 0, 255).astype(np.uint8)
+
+
+def write_warped(recs, crop_dir: Path, model_path: str, out: Path) -> None:
+    """OUT/front/<crop name>: every crop with its face straightened."""
+    import cv2
+
+    ref, tris = canonical_mesh(model_path)
+    pairs = mirror_pairs(ref[:, :2])
+    (out / "front").mkdir(parents=True, exist_ok=True)
+    for r in recs:
+        img = cv2.imread(str(crop_dir / r["name"]))
+        img = warp(img, r["raw"][:N_MESH], r["front"][:N_MESH], tris, pairs)
+        cv2.imwrite(str(out / "front" / r["name"]), img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+
+
+def write(recs, rows, raw_rows, out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     with open(out / "geometry.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["applicant_id", "gender", "n_photos", "score", *MEASURES])
@@ -290,8 +396,10 @@ def write(recs, rows, out: Path) -> None:
                 f"('crops/{r['name']}', '{json.dumps(keypts(r['raw'], r['size']))}', "
                 f"'{json.dumps(keypts(r['front'], r['size']))}', {r['yaw']:.1f}, {r['pitch']:.1f});\n"
             )
-        fixed = {r["applicant_id"]: round(r["score"], 5) for r in rows}
-        sql.write(f"INSERT OR REPLACE INTO alt_models (key, init, fixed, n_picks) VALUES ('geo', '{{}}', '{json.dumps(fixed)}', 0);\n")
+        # Two fixed models: straightened (the main one) and the photo as is.
+        for key, rs in (("geo", rows), ("geo_raw", raw_rows)):
+            fixed = {r["applicant_id"]: round(r["score"], 5) for r in rs}
+            sql.write(f"INSERT OR REPLACE INTO alt_models (key, init, fixed, n_picks) VALUES ('{key}', '{{}}', '{json.dumps(fixed)}', 0);\n")
 
 
 def main(argv: list[str]) -> None:
@@ -301,7 +409,8 @@ def main(argv: list[str]) -> None:
         gender = {int(r["applicant_id"]): r["gender"] for r in csv.DictReader(f)}
     recs = measure(detect(Path(argv[1]), argv[2]), gender, canonical_face(argv[2]))
     rows = per_person(recs, gender)
-    write(recs, rows, Path(argv[4]))
+    write(recs, rows, per_person(recs, gender, "raw"), Path(argv[4]))
+    write_warped(recs, Path(argv[1]), argv[2], Path(argv[4]))
     n_ok = sum(r["ok"] for r in recs)
     print(f"{n_ok}/{len(recs)} crops measured (straightened), {len(rows)} applicants")
 

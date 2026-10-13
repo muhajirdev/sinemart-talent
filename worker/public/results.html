@@ -166,7 +166,7 @@
     }
     $("model").innerHTML = `
       <div class="stats">
-        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "hills" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, many clusters)"} · ${isRule(m.mode, m.alternates) ? "face proportions, symmetry and averageness; no clusters" : state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
+        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "hills" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, many clusters)"} · ${isRule(m.mode, m.alternates) ? `face proportions, symmetry and averageness${m.mode === "geo_raw" ? " measured on the photos as they are" : " measured with faces straightened"}; no clusters` : state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
         <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.total - p.decided} skipped)</span></div>
         <div class="stat"><b>${pct(m.heldout_line)}</b><span>Model 1 straight arrow: held-out agreement</span></div>
       </div>
@@ -214,11 +214,12 @@
   // Comparison models are numbered from 2; a fixed rule with no taste space
   // (the face-geometry score) is called "Golden ratio" instead.
   const isRule = (key, alts) => (alts || []).some((a) => a.key === key && !a.has_z);
-  const altName = (key, alts) => isRule(key, alts) ? "Golden ratio"
+  const RULES = { geo: "Golden ratio · straightened", geo_raw: "Golden ratio · original" };
+  const altName = (key, alts) => isRule(key, alts) ? RULES[key] ?? "Golden ratio"
     : `Model ${(alts || []).filter((a) => a.has_z).findIndex((a) => a.key === key) + 2}`;
   const modeName = (mode, alts) => mode === "one" ? "Model 1 · one cluster"
     : !mode || mode === "hills" ? "Model 1 · many clusters"
-    : isRule(mode, alts) ? "Golden ratio"
+    : isRule(mode, alts) ? altName(mode, alts)
     : `${altName(mode.split(":")[0], alts)} · ${mode.endsWith(":one") ? "one cluster" : "many clusters"}`;
   const battles = (f) => (f.games ? `Won ${f.wins} of ${f.games} battle${f.games === 1 ? "" : "s"}` : "No battles yet");
   // How settled the score is: the spread between retrains on resampled picks.
@@ -283,20 +284,21 @@
     }));
   }
 
-  // Lightbox: one person large, face crop first, then every whole photo.
+  // Lightbox: one person large: face crop as photographed, the same face
+  // straightened (warped to look straight ahead), then every whole photo.
   const lb = { id: null, v: 0, n: 1 };
   function openBox(id) {
     const list = state.d.faces, i = list.findIndex((f) => f.id === id);
     const f = list[i];
     if (!f) return;
-    Object.assign(lb, { id, v: 0, n: (f.n_photos || 0) + 1, f, rank: f.score == null ? null : i + 1, points: undefined, only: null });
+    Object.assign(lb, { id, v: 0, n: (f.n_photos || 0) + 2, f, rank: f.score == null ? null : i + 1, points: undefined, only: null });
     api(`/api/points/${id}`).then((r) => r.json()).then((p) => { if (lb.id === id) { lb.points = p; drawBoxPhi(); } }).catch(() => {});
     // Load every photo now so flipping never waits.
     for (let k = 0; k < lb.n; k++) new Image().src = boxUrl(k);
     $("lb").hidden = false;
     showBox();
   }
-  const boxUrl = (k) => `/img/${lb.id}${k ? "/" + (k - 1) : ""}?t=${encodeURIComponent(token)}`;
+  const boxUrl = (k) => `/img/${lb.id}${["", "/front"][k] ?? "/" + (k - 2)}?t=${encodeURIComponent(token)}`;
   function showBox() {
     const f = lb.f, beat = beatOf(f);
     $("lbImg").src = boxUrl(lb.v);
@@ -305,7 +307,7 @@
     $("lbDots").innerHTML = lb.n < 2 ? "" : Array.from({ length: lb.n }, (_, k) => `<i class="${k === lb.v ? "on" : ""}"></i>`).join("");
     $("lbCap").innerHTML = `<b>#${f.id}</b> · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${lb.rank}`}
       · ${f.look == null ? "no cluster" : hn(f.look)}<br>${battles(f)}${certainty(f)}<br>${geoLine(f)}
-      <div class="label">${lb.v === 0 ? "Face" : `Photo ${lb.v} of ${lb.n - 1}`}</div>`;
+      <div class="label">${["Face, as photographed", "Face, straightened (warped to look straight ahead)"][lb.v] ?? `Photo ${lb.v - 1} of ${lb.n - 2}`}</div>`;
     drawBoxPhi();
   }
   // Golden-ratio lines over the face view; tap a ratio to show it alone.
@@ -315,14 +317,17 @@
     $("lbPhiBtn").setAttribute("aria-pressed", String(phiOn));
     $("lbPhiBtn").textContent = phiOn ? "Hide golden ratio" : "Show golden ratio";
     const fp = lb.points;
-    $("lbPhi").innerHTML = phiOn && fp && lb.v === 0 ? Phi.svg(fp.points, "en", lb.only) : "";
+    // Original view: lines and values from the photo as is. Straightened view
+    // (and whole photos): from the straightened face, which the main score uses.
+    const pts = fp && (lb.v === 0 ? fp.points : fp.front);
+    $("lbPhi").innerHTML = phiOn && pts && lb.v < 2 ? Phi.svg(pts, "en", lb.only) : "";
     if (!phiOn) { $("lbPhiList").innerHTML = ""; return; }
     if (fp === undefined) { $("lbPhiList").textContent = "Loading…"; return; }
     if (!fp) { $("lbPhiList").textContent = "No face points for this photo."; return; }
     const turned = Math.abs(fp.yaw) > 35 || Math.abs(fp.pitch) > 35;
-    $("lbPhiList").innerHTML = Phi.ratios(fp.points, "en", fp.front).map((r, i) =>
+    $("lbPhiList").innerHTML = Phi.ratios(pts || fp.points, "en").map((r, i) =>
       `<button data-i="${i}" aria-pressed="${lb.only === i}"><i style="background:${r.color}"></i>${r.name}: <b>${r.value.toFixed(2)}</b> (${Phi.closeness(r.value)})</button>`).join("")
-      + `<div style="width:100%;color:#aaa">Ideal 1.62. In brackets: closeness to it, 0–100. Solid line ÷ dashed line. Values are measured with the head turned to face forward.${lb.v ? " Lines show on the face photo." : ""}${turned ? " Head is turned too far here, so the score left this photo out." : ""}</div>`;
+      + `<div style="width:100%;color:#aaa">Ideal 1.62. In brackets: closeness to it, 0–100. Solid line ÷ dashed line. ${lb.v === 0 ? "Values measured on the photo as is (\"Golden ratio · original\")." : "Values measured with the face straightened (\"Golden ratio · straightened\")."}${lb.v > 1 ? " Lines show on the two face views." : ""}${turned ? " Head is turned too far here, so the score left this photo out." : ""}</div>`;
     $("lbPhiList").querySelectorAll("button").forEach((b) => (b.onclick = () => {
       const i = Number(b.dataset.i); lb.only = lb.only === i ? null : i; drawBoxPhi();
     }));

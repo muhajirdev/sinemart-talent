@@ -385,14 +385,16 @@ export default {
       return json({ ok: true });
     }
 
-    // /img/<id> = the person's main face crop; /img/<id>/<n> = their n-th whole photo.
-    const img = url.pathname.match(/^\/img\/(\d+)(?:\/(\d+))?$/);
+    // /img/<id> = the person's main face crop; /img/<id>/front = the same crop with
+    // the face straightened; /img/<id>/<n> = their n-th whole photo.
+    const img = url.pathname.match(/^\/img\/(\d+)(?:\/(\d+|front))?$/);
     if (img) {
-      const row = img[2] === undefined
+      const row = img[2] === undefined || img[2] === "front"
         ? await env.DB.prepare("SELECT image_key FROM applicants WHERE id = ?1").bind(Number(img[1])).first<{ image_key: string }>()
         : await env.DB.prepare("SELECT image_key FROM photos WHERE applicant_id = ?1 AND n = ?2")
             .bind(Number(img[1]), Number(img[2])).first<{ image_key: string }>();
-      const obj = row ? await env.IMAGES.get(row.image_key) : null;
+      const front = img[2] === "front" && row ? await env.IMAGES.get(row.image_key.replace(/^crops\//, "front/")) : null;
+      const obj = front ?? (row ? await env.IMAGES.get(row.image_key) : null);
       if (!obj) return new Response("not found", { status: 404 });
       return new Response(obj.body, {
         headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=86400", "x-robots-tag": NOINDEX },
