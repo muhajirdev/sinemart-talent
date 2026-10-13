@@ -147,7 +147,7 @@ async function results(env: Env, who: string | null, mode: string | null = null)
      FROM model WHERE id = 1`,
   ).first<Record<string, unknown>>();
   const oneParams = model?.params_one as string | null;
-  const alternates = (await env.DB.prepare("SELECT key, heldout, heldout_one, n_picks FROM alt_models ORDER BY key").all()).results;
+  const alternates = (await env.DB.prepare("SELECT key, heldout, heldout_one, heldout_fixed, fixed IS NOT NULL AS has_fixed, n_picks FROM alt_models ORDER BY key").all()).results;
   if (model) delete model.params_one;
   const picks = await env.DB.prepare(
     `SELECT COUNT(*) AS decided, SUM(tie) AS ties, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters
@@ -337,7 +337,7 @@ export default {
            params_one = NULL, heldout_one = NULL, n_test = NULL, split_by = NULL, n_picks = 0, trained_at = NULL WHERE id = 1`,
         ),
         env.DB.prepare(
-          "UPDATE alt_models SET params = NULL, heldout = NULL, params_one = NULL, heldout_one = NULL, n_picks = 0, trained_at = NULL",
+          "UPDATE alt_models SET params = NULL, heldout = NULL, params_one = NULL, heldout_one = NULL, heldout_fixed = NULL, n_picks = 0, trained_at = NULL",
         ),
       ]);
       return json({ ok: true });

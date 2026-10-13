@@ -89,15 +89,16 @@ export function oneHill(Z: number[][], G: (string | null)[]) {
 // picks and the same held-out split, each in its own taste space. They only
 // feed the scores page; battles keep using the main model.
 export async function loadAlternate(env: Env, key: string) {
-  const row = await env.DB.prepare("SELECT init, params, params_one FROM alt_models WHERE key = ?1")
-    .bind(key).first<{ init: string; params: string | null; params_one: string | null }>();
+  const row = await env.DB.prepare("SELECT init, params, params_one, fixed FROM alt_models WHERE key = ?1")
+    .bind(key).first<{ init: string; params: string | null; params_one: string | null; fixed: string | null }>();
   if (!row) return null;
   const zs = new Map(
     (await env.DB.prepare("SELECT applicant_id AS id, z FROM alt_z WHERE key = ?1").bind(key).all<{ id: number; z: string }>())
       .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
   );
   const init = JSON.parse(row.init) as { peaks: number[][]; peak_gender?: string[] };
-  return { init, params: row.params, paramsOne: row.params_one, zs };
+  const fixed = row.fixed ? (JSON.parse(row.fixed) as Record<string, number>) : null;
+  return { init, params: row.params, paramsOne: row.params_one, fixed, zs };
 }
 
 async function fitAlternates(
@@ -110,7 +111,11 @@ async function fitAlternates(
     if (!alt || faces.some((f) => !alt.zs.has(f.id))) continue; // must cover everyone
     const Z = faces.map((f) => alt.zs.get(f.id)!);
     const fresh = () => new Hills(alt.init.peaks, alt.init.peak_gender ?? []);
-    let heldout: number | null = null, heldoutOne: number | null = null;
+    let heldout: number | null = null, heldoutOne: number | null = null, heldoutFixed: number | null = null;
+    if (test.length >= 3 && alt.fixed) {
+      // A never-trained score (missing people count as average, 0).
+      heldoutFixed = agreement(faces.map((f) => alt.fixed![f.id] ?? 0), test);
+    }
     if (train.length >= MIN_PICKS && test.length >= 3) {
       const h = fresh().fit(Z, train, G);
       heldout = agreement(Z.map((z, i) => h.score(z, G[i])), test);
@@ -121,9 +126,9 @@ async function fitAlternates(
     const one = oneHill(Z, G).fit(Z, picks, G);
     stmts.push(
       env.DB.prepare(
-        `UPDATE alt_models SET params = ?1, heldout = ?2, params_one = ?3, heldout_one = ?4, n_picks = ?5,
-           trained_at = datetime('now') WHERE key = ?6`,
-      ).bind(JSON.stringify(main), heldout, JSON.stringify(one), heldoutOne, picks.length, key),
+        `UPDATE alt_models SET params = ?1, heldout = ?2, params_one = ?3, heldout_one = ?4, heldout_fixed = ?5,
+           n_picks = ?6, trained_at = datetime('now') WHERE key = ?7`,
+      ).bind(JSON.stringify(main), heldout, JSON.stringify(one), heldoutOne, heldoutFixed, picks.length, key),
     );
   }
   return stmts;

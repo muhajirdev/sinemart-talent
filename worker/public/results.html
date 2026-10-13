@@ -162,6 +162,7 @@
       <table class="cmp"><thead><tr><th>Held-out agreement</th><th>Many clusters</th><th>One cluster</th></tr></thead><tbody>
         ${[["Model 1", m.heldout_hills, m.heldout_one], ...(m.alternates || []).map((a, i) => [`Model ${i + 2}`, a.heldout, a.heldout_one])]
           .map(([n, a, b]) => `<tr><td>${n}</td><td>${pct(a)}</td><td>${pct(b)}</td></tr>`).join("")}
+        ${(m.alternates || []).map((a, i) => a.has_fixed ? `<tr><td>Model ${i + 2} fixed rule</td><td colspan="2">${pct(a.heldout_fixed)} <span class="label">(not trained on picks)</span></td></tr>` : "").join("")}
       </tbody></table>
       <p class="note">${trained
         ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`

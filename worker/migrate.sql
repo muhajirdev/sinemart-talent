@@ -6,3 +6,5 @@ ALTER TABLE model ADD COLUMN heldout_one REAL;
 ALTER TABLE picks ADD COLUMN tie INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE alt_models ADD COLUMN params_one TEXT;
 ALTER TABLE alt_models ADD COLUMN heldout_one REAL;
+ALTER TABLE alt_models ADD COLUMN fixed TEXT;
+ALTER TABLE alt_models ADD COLUMN heldout_fixed REAL;

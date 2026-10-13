@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS alt_models (
   heldout    REAL,
   params_one  TEXT,                        -- the same embedding with one hill per group
   heldout_one REAL,
+  fixed       TEXT,                        -- optional never-trained score per applicant (JSON {id: score})
+  heldout_fixed REAL,                      -- its agreement with the same held-out picks
   n_picks    INTEGER NOT NULL DEFAULT 0,
   trained_at TEXT
 );
