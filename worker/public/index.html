@@ -32,6 +32,7 @@
   .photo .nav.prev { left: 8px; } .photo .nav.next { right: 8px; }
   .photo .geo { position: absolute; left: 8px; right: 8px; bottom: 26px; background: #000b; color: #fff; border-radius: 10px;
     padding: 5px 9px; font: 600 12px system-ui; text-align: center; pointer-events: none; }
+  .photo svg.phi { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   #geoBtn[aria-pressed="true"] { color: var(--accent); }
   .photo .dots { position: absolute; bottom: 10px; left: 0; right: 0; display: flex; gap: 6px; justify-content: center; pointer-events: none; }
   .photo .dots i { width: 7px; height: 7px; border-radius: 50%; background: #fff6; box-shadow: 0 0 2px #0008; }
@@ -95,6 +96,7 @@
 </footer>
 <div class="keys hide" id="keys">← → ganti foto · 1 / 2 pilih · = sama saja · S lewati · U batalkan</div>
 <div id="toast" class="hide" role="status"><span id="toastText"></span><button id="toastUndo">Batalkan</button></div>
+<script src="/phi.js"></script>
 <script>
 (() => {
   const qs = new URLSearchParams(location.search);
@@ -146,6 +148,7 @@
     // Swap only once the photo is ready, so the old one never blanks out.
     const url = v === 0 ? imgUrl(id) : imgUrl(id, v - 1);
     box.dataset.want = url;
+    drawPhi(side);
     preload(url).then(() => { if (box.dataset.want === url) box.querySelector("img").src = url; });
     box.querySelector(".label").textContent = total < 2 ? "Wajah" : `${label(kinds, v)} · ${v + 1}/${total}`;
     box.querySelectorAll(".nav").forEach((n) => n.classList.toggle("hide", total < 2));
@@ -242,8 +245,16 @@
     if (on && !geo) { try { geo = await (await api("/api/geometry")).json(); } catch (_) { geo = {}; } }
     showGeo();
   }
+  // With the toggle on, the face view (view 0) also gets the ratio lines.
+  function drawPhi(side) {
+    const box = $(side).querySelector(".photo");
+    box.querySelector("svg.phi")?.remove();
+    const fp = current?.[side + "_points"];
+    if (geoOn && fp && views[side] === 0) box.querySelector("img").insertAdjacentHTML("afterend", Phi.svg(fp.points, "id"));
+  }
   function showGeo() {
     for (const side of ["left", "right"]) {
+      drawPhi(side);
       const el = $(side).querySelector(".geo");
       el.classList.toggle("hide", !geoOn || !current || !geo);
       if (!geoOn || !current || !geo) continue;

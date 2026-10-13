@@ -68,7 +68,15 @@
     align-items: center; justify-content: center; padding: 16px; touch-action: pan-y; }
   .lb[hidden] { display: none; }
   .lb .stage { position: relative; width: min(92vw, 640px); height: min(70vh, 720px); display: flex; align-items: center; justify-content: center; }
-  .lb .stage img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; user-select: none; -webkit-user-drag: none; }
+  .lb .stage img { width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
+  .lb #lbPhi, .lb #lbPhi svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .lb .phiBox { margin-top: 10px; text-align: center; color: #ddd; font-size: 13px; max-width: 640px; }
+  .lb .phiBox button { all: unset; cursor: pointer; color: var(--accent); font-weight: 600; font-size: 14px; }
+  .lb .phiBox button[aria-pressed="true"] { text-decoration: underline; }
+  .lb #lbPhiList { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: center; margin-top: 6px; }
+  .lb #lbPhiList button { all: unset; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+  .lb #lbPhiList button[aria-pressed="true"] { background: #fff2; }
+  .lb #lbPhiList i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin-right: 5px; }
   .lb .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%; border: 0;
     background: rgba(255,255,255,.15); color: #fff; font-size: 26px; cursor: pointer; }
   .lb .prev { left: 4px; } .lb .next { right: 4px; }
@@ -116,11 +124,13 @@
 <ol id="faces"></ol>
 <div class="lb" id="lb" hidden role="dialog" aria-modal="true" aria-label="Candidate photos">
   <button class="close" id="lbClose" aria-label="Close">✕</button>
-  <div class="stage"><img id="lbImg" alt=""><button class="nav prev" id="lbPrev" aria-label="Previous photo">‹</button>
+  <div class="stage"><img id="lbImg" alt=""><div id="lbPhi"></div><button class="nav prev" id="lbPrev" aria-label="Previous photo">‹</button>
     <button class="nav next" id="lbNext" aria-label="Next photo">›</button></div>
   <div class="dots" id="lbDots"></div>
   <div class="cap" id="lbCap"></div>
+  <div class="phiBox"><button id="lbPhiBtn" aria-pressed="false">Show golden ratio</button><div id="lbPhiList"></div></div>
 </div>
+<script src="/phi.js"></script>
 <script>
 (() => {
   let token = null;
@@ -279,7 +289,8 @@
     const list = state.d.faces, i = list.findIndex((f) => f.id === id);
     const f = list[i];
     if (!f) return;
-    Object.assign(lb, { id, v: 0, n: (f.n_photos || 0) + 1, f, rank: f.score == null ? null : i + 1 });
+    Object.assign(lb, { id, v: 0, n: (f.n_photos || 0) + 1, f, rank: f.score == null ? null : i + 1, points: undefined, only: null });
+    api(`/api/points/${id}`).then((r) => r.json()).then((p) => { if (lb.id === id) { lb.points = p; drawBoxPhi(); } }).catch(() => {});
     // Load every photo now so flipping never waits.
     for (let k = 0; k < lb.n; k++) new Image().src = boxUrl(k);
     $("lb").hidden = false;
@@ -295,7 +306,28 @@
     $("lbCap").innerHTML = `<b>#${f.id}</b> · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${lb.rank}`}
       · ${f.look == null ? "no cluster" : hn(f.look)}<br>${battles(f)}${certainty(f)}<br>${geoLine(f)}
       <div class="label">${lb.v === 0 ? "Face" : `Photo ${lb.v} of ${lb.n - 1}`}</div>`;
+    drawBoxPhi();
   }
+  // Golden-ratio lines over the face view; tap a ratio to show it alone.
+  let phiOn = false;
+  try { phiOn = localStorage.getItem("phi") === "1"; } catch (_) {}
+  function drawBoxPhi() {
+    $("lbPhiBtn").setAttribute("aria-pressed", String(phiOn));
+    $("lbPhiBtn").textContent = phiOn ? "Hide golden ratio" : "Show golden ratio";
+    const fp = lb.points;
+    $("lbPhi").innerHTML = phiOn && fp && lb.v === 0 ? Phi.svg(fp.points, "en", lb.only) : "";
+    if (!phiOn) { $("lbPhiList").innerHTML = ""; return; }
+    if (fp === undefined) { $("lbPhiList").textContent = "Loading…"; return; }
+    if (!fp) { $("lbPhiList").textContent = "No face points for this photo."; return; }
+    const turned = Math.abs(fp.yaw) > 20 || Math.abs(fp.pitch) > 20;
+    $("lbPhiList").innerHTML = Phi.ratios(fp.points, "en").map((r, i) =>
+      `<button data-i="${i}" aria-pressed="${lb.only === i}"><i style="background:${r.color}"></i>${r.name}: <b>${r.value.toFixed(2)}</b> (${Phi.closeness(r.value)})</button>`).join("")
+      + `<div style="width:100%;color:#aaa">Ideal 1.62. In brackets: closeness to it, 0–100. Solid line ÷ dashed line.${lb.v ? " Lines show on the face photo." : ""}${turned ? " Head is turned here, so the score left this photo out." : ""}</div>`;
+    $("lbPhiList").querySelectorAll("button").forEach((b) => (b.onclick = () => {
+      const i = Number(b.dataset.i); lb.only = lb.only === i ? null : i; drawBoxPhi();
+    }));
+  }
+  $("lbPhiBtn").onclick = () => { phiOn = !phiOn; try { localStorage.setItem("phi", phiOn ? "1" : "0"); } catch (_) {} drawBoxPhi(); };
   const flipBox = (step) => { if (lb.n > 1) { lb.v = (lb.v + step + lb.n) % lb.n; showBox(); } };
   const closeBox = () => { $("lb").hidden = true; lb.id = null; };
   $("lbPrev").onclick = (e) => { e.stopPropagation(); flipBox(-1); };

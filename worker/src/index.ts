@@ -50,7 +50,16 @@ async function withPhotos(env: Env, pair: { queue_id: number | null; left_id: nu
     "SELECT applicant_id AS id, kind FROM photos WHERE applicant_id IN (?1, ?2) ORDER BY applicant_id, n",
   ).bind(pair.left_id, pair.right_id).all<{ id: number; kind: string }>();
   const kinds = (id: number) => results.filter((r) => r.id === id).map((r) => r.kind);
-  return { ...pair, left_photos: kinds(pair.left_id), right_photos: kinds(pair.right_id) };
+  const [lp, rp] = await Promise.all([facePoints(env, pair.left_id), facePoints(env, pair.right_id)]);
+  return { ...pair, left_photos: kinds(pair.left_id), right_photos: kinds(pair.right_id), left_points: lp, right_points: rp };
+}
+
+// Face points on a person's main face crop (what /img/<id> shows), or null.
+async function facePoints(env: Env, id: number) {
+  const r = await env.DB.prepare(
+    "SELECT f.points, f.yaw, f.pitch FROM face_points f JOIN applicants a ON a.image_key = f.image_key WHERE a.id = ?1",
+  ).bind(id).first<{ points: string; yaw: number; pitch: number }>();
+  return r ? { points: JSON.parse(r.points), yaw: r.yaw, pitch: r.pitch } : null;
 }
 
 async function nextPair(env: Env, who: Rater) {
@@ -319,6 +328,8 @@ export default {
     const only = url.searchParams.get("rater"); // results/map for one rater's taste
 
     if (url.pathname === "/api/geometry") return json(await geometryPercentiles(env));
+    const fp = url.pathname.match(/^\/api\/points\/(\d+)$/);
+    if (fp) return json(await facePoints(env, Number(fp[1])));
     if (url.pathname === "/api/me") {
       const mine = await env.DB.prepare(`SELECT COUNT(*) AS n FROM picks WHERE rater = ?1 AND ${ANSWERED}`).bind(who.name).first<{ n: number }>();
       return json({ name: who.name, picks: mine?.n ?? 0 });

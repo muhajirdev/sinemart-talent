@@ -21,3 +21,12 @@ CREATE TABLE IF NOT EXISTS geometry (
   asymmetry    REAL,
   atypicality  REAL                          -- distance from the average face (averageness, reversed)
 );
+
+-- Key face points on each face crop (pipeline sinemart.landmarks), as 0-1
+-- fractions of the crop, so the pages can draw the golden-ratio lines.
+CREATE TABLE IF NOT EXISTS face_points (
+  image_key TEXT PRIMARY KEY,              -- R2 key of the crop, as in applicants.image_key
+  points    TEXT NOT NULL,                 -- JSON {name: [x, y]}
+  yaw       REAL,                          -- head turn, degrees
+  pitch     REAL
+);
