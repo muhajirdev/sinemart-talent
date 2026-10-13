@@ -140,6 +140,26 @@ async function maybeRetrain(env: Env) {
   else if (row && row.trained === 0 && row.picks >= 5) await retrain(env);
 }
 
+// Face-geometry numbers for the picking page's "Golden ratio" toggle: each rule
+// as a percentile within the person's gender (100 = closest to its ideal).
+async function geometryPercentiles(env: Env) {
+  const { results: rows } = await env.DB.prepare(
+    `SELECT g.applicant_id AS id, a.gender, g.phi_dev, g.asymmetry, g.atypicality, g.pallett_dev
+     FROM geometry g JOIN applicants a ON a.id = g.applicant_id`,
+  ).all<Record<string, number | string | null>>();
+  const out: Record<number, Record<string, number>> = {};
+  for (const r of rows) out[r.id as number] = {};
+  const keys = [["phi_dev", "phi"], ["asymmetry", "sym"], ["atypicality", "avg"], ["pallett_dev", "pal"]];
+  for (const g of new Set(rows.map((r) => r.gender))) {
+    const grp = rows.filter((r) => r.gender === g);
+    for (const [k, short] of keys) {
+      const have = grp.filter((r) => r[k] != null).sort((a, b) => (b[k] as number) - (a[k] as number)); // worst first
+      have.forEach((r, i) => (out[r.id as number][short] = have.length > 1 ? Math.round((i / (have.length - 1)) * 100) : 50));
+    }
+  }
+  return out;
+}
+
 async function results(env: Env, who: string | null, mode: string | null = null) {
   if (who) return raterResults(env, who);
   const model = await env.DB.prepare(
@@ -298,6 +318,7 @@ export default {
     if (!who) return json({ error: "sign in first" }, 401);
     const only = url.searchParams.get("rater"); // results/map for one rater's taste
 
+    if (url.pathname === "/api/geometry") return json(await geometryPercentiles(env));
     if (url.pathname === "/api/me") {
       const mine = await env.DB.prepare(`SELECT COUNT(*) AS n FROM picks WHERE rater = ?1 AND ${ANSWERED}`).bind(who.name).first<{ n: number }>();
       return json({ name: who.name, picks: mine?.n ?? 0 });

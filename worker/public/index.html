@@ -30,6 +30,9 @@
   .photo .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%;
     border: 0; background: #000a; color: #fff; font-size: 22px; line-height: 40px; padding: 0; cursor: pointer; }
   .photo .nav.prev { left: 8px; } .photo .nav.next { right: 8px; }
+  .photo .geo { position: absolute; left: 8px; right: 8px; bottom: 26px; background: #000b; color: #fff; border-radius: 10px;
+    padding: 5px 9px; font: 600 12px system-ui; text-align: center; pointer-events: none; }
+  #geoBtn[aria-pressed="true"] { color: var(--accent); }
   .photo .dots { position: absolute; bottom: 10px; left: 0; right: 0; display: flex; gap: 6px; justify-content: center; pointer-events: none; }
   .photo .dots i { width: 7px; height: 7px; border-radius: 50%; background: #fff6; box-shadow: 0 0 2px #0008; }
   .photo .dots i.on { background: #fff; }
@@ -75,13 +78,13 @@
   <section class="card" id="left">
     <div class="photo"><img alt="Peserta kiri"><span class="label"></span>
       <button class="nav prev" aria-label="Foto sebelumnya">‹</button><button class="nav next" aria-label="Foto berikutnya">›</button>
-      <span class="dots"></span></div>
+      <span class="dots"></span><span class="geo hide"></span></div>
     <button class="pick" data-side="left">Pilih yang ini<kbd>1</kbd></button>
   </section>
   <section class="card" id="right">
     <div class="photo"><img alt="Peserta kanan"><span class="label"></span>
       <button class="nav prev" aria-label="Foto sebelumnya">‹</button><button class="nav next" aria-label="Foto berikutnya">›</button>
-      <span class="dots"></span></div>
+      <span class="dots"></span><span class="geo hide"></span></div>
     <button class="pick" data-side="right">Pilih yang ini<kbd>2</kbd></button>
   </section>
 </main>
@@ -228,10 +231,32 @@
     toast("Gagal menyimpan satu pilihan. Cek koneksi.");
   }));
 
+  // "Golden ratio" toggle: face-proportion numbers on each card (percentile
+  // within the gender, 100 = closest to the rule's ideal). Off by default so
+  // it doesn't steer picks; the choice is remembered on this phone.
+  let geoOn = load("geo") === "1", geo = null;
+  async function setGeo(on) {
+    geoOn = on; store("geo", on ? "1" : null);
+    $("geoBtn").textContent = `Golden ratio: ${on ? "on" : "off"}`;
+    $("geoBtn").setAttribute("aria-pressed", String(on));
+    if (on && !geo) { try { geo = await (await api("/api/geometry")).json(); } catch (_) { geo = {}; } }
+    showGeo();
+  }
+  function showGeo() {
+    for (const side of ["left", "right"]) {
+      const el = $(side).querySelector(".geo");
+      el.classList.toggle("hide", !geoOn || !current || !geo);
+      if (!geoOn || !current || !geo) continue;
+      const g = geo[current[side + "_id"]];
+      el.textContent = g ? `Golden ratio ${g.phi ?? "–"} · Simetri ${g.sym ?? "–"} · Rata-rata ${g.avg ?? "–"} · Pallett ${g.pal ?? "–"}`
+        : "Golden ratio: – (tidak ada foto wajah depan)";
+    }
+  }
+
   function render(p) {
     current = p;
     view = 0;
-    showView("left"); showView("right");
+    showView("left"); showView("right"); showGeo();
     document.querySelectorAll(".card").forEach((b) => b.classList.remove("chosen"));
     $("msg").classList.add("hide"); $("pair").classList.remove("hide"); $("bar").classList.remove("hide");
     $("keys").classList.remove("hide");
@@ -286,6 +311,10 @@
       out.textContent = "Bukan kamu?";
       out.onclick = () => { store("rater", null); token = null; current = null; signIn(); };
       $("who").append(out);
+      const gb = document.createElement("button");
+      gb.id = "geoBtn"; gb.onclick = () => setGeo(!geoOn);
+      $("who").append(gb);
+      setGeo(geoOn);
       $("who").classList.remove("hide");
       ahead = [];
       render(await take());
