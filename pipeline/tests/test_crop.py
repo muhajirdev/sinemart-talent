@@ -2,7 +2,9 @@ import math
 
 import numpy as np
 
-from sinemart.crop import EYE_Y, GREY, OUT, SIDE_IOD, Face, align_matrix, assess, grey_background, yaw_proxy
+from sinemart.crop import (
+    EYE_Y, GREY, OUT, SIDE_IOD, Face, align_matrix, assess, grey_background, grid_faces, yaw_proxy,
+)
 
 
 def face(re, le, nose=None, score=0.95, box=(0, 0, 100, 100)):
@@ -48,3 +50,11 @@ def test_quality_gate_reasons():
     group = [good, face((0, 0), (60, 0), box=(200, 0, 90, 90))]
     assert "multiple_faces" in assess(group, sharp).reasons
     assert assess([], sharp).reasons == ["no_face"]
+
+
+def test_grid_keeps_every_big_face_only():
+    big = face((0, 0), (60, 0), box=(0, 0, 100, 100))
+    also_big = face((300, 0), (360, 0), box=(300, 0, 90, 90))
+    background = face((600, 0), (610, 0), box=(600, 0, 20, 20))
+    assert grid_faces([big, also_big, background]) == [big, also_big]
+    assert grid_faces([]) == []

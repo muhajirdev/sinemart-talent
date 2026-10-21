@@ -144,7 +144,7 @@ class Segmenter:
         self.seg.close()
 
 
-def assess(faces: list[Face], crop: np.ndarray) -> Quality:
+def assess(faces: list[Face], crop: np.ndarray, allow_many: bool = False) -> Quality:
     if not faces:
         return Quality(False, ["no_face"])
     f = faces[0]
@@ -167,7 +167,7 @@ def assess(faces: list[Face], crop: np.ndarray) -> Quality:
         q.reasons.append("bad_exposure")
     if q.yaw > MAX_YAW:
         q.reasons.append("not_frontal")
-    if len(faces) > 1:
+    if len(faces) > 1 and not allow_many:
         a0 = f.box[2] * f.box[3]
         if faces[1].box[2] * faces[1].box[3] > SECOND_FACE_RATIO * a0:
             q.reasons.append("multiple_faces")
@@ -190,6 +190,39 @@ def process(img: np.ndarray, detector: Detector, segmenter: Segmenter | None = N
         crop = grey_background(crop, segmenter(crop))
         q.bg = "grey"
     return crop, q
+
+
+def grid_faces(faces: list[Face]) -> list[Face]:
+    """Every face in the photo about as big as the largest one.
+
+    The 2026 sign-up form asks for a photo GRID: several shots of the same
+    person in one image. Each big face becomes its own crop; small faces in
+    the background are ignored."""
+    if not faces:
+        return []
+    a0 = faces[0].box[2] * faces[0].box[3]
+    return [f for f in faces if f.box[2] * f.box[3] > SECOND_FACE_RATIO * a0]
+
+
+def process_grid(img: np.ndarray, detector: Detector, segmenter: Segmenter | None = None):
+    """Like process(), but one (crop, Quality) per big face, for grid photos."""
+    faces = detector(img)
+    big = grid_faces(faces)
+    if not big:
+        return [(None, Quality(False, ["no_face"]))]
+    out = []
+    for f in big:
+        crop = cv2.warpAffine(
+            img, align_matrix(f), (OUT, OUT),
+            flags=cv2.INTER_AREA if f.iod * SIDE_IOD > OUT else cv2.INTER_CUBIC,
+            borderMode=cv2.BORDER_CONSTANT, borderValue=(GREY, GREY, GREY),
+        )
+        q = assess([f], crop, allow_many=True)
+        if segmenter is not None:
+            crop = grey_background(crop, segmenter(crop))
+            q.bg = "grey"
+        out.append((crop, q))
+    return out
 
 
 VIEW_MAX = 1280  # long side of the full photo kept for viewing
@@ -220,6 +253,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("crop_dir")
     ap.add_argument("--yunet", required=True)
     ap.add_argument("--seg")
+    ap.add_argument("--grid", action="store_true", help="crop every big face of a photo (2026 photo grids)")
     args = ap.parse_args(argv)
 
     with open(args.manifest) as f:
@@ -248,23 +282,27 @@ def main(argv: list[str] | None = None) -> None:
                 used.add(name)
                 img = cv2.imread(str(Path(args.photo_root) / row.path))
                 if img is None:
-                    crop, q = None, Quality(False, ["unreadable"])
+                    results = [(None, Quality(False, ["unreadable"]))]
                 else:
-                    crop, q = process(img, detector, segmenter)
+                    results = process_grid(img, detector, segmenter) if args.grid else [process(img, detector, segmenter)]
                     s = VIEW_MAX / max(img.shape[:2])
                     view = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) if s < 1 else img
                     cv2.imwrite(str(out / "photos" / name), view, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                if crop is not None:
-                    cv2.imwrite(str(out / ("" if q.ok else "rejected") / name), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                passed += q.ok
-                any_ok |= q.ok
+                # The whole photo is viewed once (view=1 on its first row);
+                # each extra face of a grid is a crop of its own (view=0).
+                for j, (crop, q) in enumerate(results):
+                    crop_name = name if j == 0 else name.replace(".jpg", f"f{j + 1}.jpg")
+                    if crop is not None:
+                        cv2.imwrite(str(out / ("" if q.ok else "rejected") / crop_name), crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                    passed += q.ok
+                    any_ok |= q.ok
+                    w.writerow({
+                        "applicant_id": aid, "kind": row.kind, "file": crop_name, "stage": row.stage, "ok": int(q.ok),
+                        "view": int(img is not None and j == 0), "reasons": " ".join(q.reasons),
+                        "face_score": f"{q.face_score:.3f}", "iod_px": f"{q.iod_px:.1f}", "sharpness": f"{q.sharpness:.1f}",
+                        "brightness": f"{q.brightness:.1f}", "yaw": f"{q.yaw:.3f}", "bg": q.bg,
+                    })
                 done += 1
-                w.writerow({
-                    "applicant_id": aid, "kind": row.kind, "file": name, "stage": row.stage, "ok": int(q.ok),
-                    "view": int(img is not None), "reasons": " ".join(q.reasons), "face_score": f"{q.face_score:.3f}",
-                    "iod_px": f"{q.iod_px:.1f}", "sharpness": f"{q.sharpness:.1f}", "brightness": f"{q.brightness:.1f}",
-                    "yaw": f"{q.yaw:.3f}", "bg": q.bg,
-                })
                 print(f"\r{done}/{len(rows)} photos, {passed} usable faces", end="", flush=True)
             people_ok += any_ok
     print(f"\n{people_ok}/{len(people)} applicants have at least one usable face")
