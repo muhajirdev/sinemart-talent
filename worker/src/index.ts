@@ -1,9 +1,11 @@
 // Sinemart A/B picking app: serves pairs of applicant crops, records picks,
-// retrains the hills model as picks come in, and reports scores.
+// retrains the models as picks come in, and reports scores.
 // Static UI lives in ../public; everything under /api and /img lands here.
 
 import { territory } from "./map";
-import { ANSWERED, MIN_PICKS, RETRAIN_EVERY, hillsFrom, loadAlternate, raterAgreement, raterModel, retrain } from "./retrain";
+import {
+  ANSWERED, MIN_PICKS, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, raterAgreement, raterModel, retrain,
+} from "./retrain";
 
 export interface Env {
   DB: D1Database;
@@ -62,14 +64,40 @@ async function facePoints(env: Env, id: number) {
   return r ? { points: JSON.parse(r.points), front: r.front ? JSON.parse(r.front) : null, yaw: r.yaw, pitch: r.pitch } : null;
 }
 
+// About 1 in REPEAT_EVERY battles: a pair this rater answered at least 20
+// of their picks ago, sides swapped, never repeated before. It goes in the
+// queue already served to them, so the pick is recorded as kind 'repeat'.
+async function repeatPair(env: Env, who: Rater) {
+  if (Math.random() * REPEAT_EVERY >= 1) return null;
+  const old = await env.DB.prepare(
+    `SELECT p.left_id, p.right_id FROM picks p
+     WHERE p.rater = ?1 AND p.winner_id IS NOT NULL AND p.kind != 'repeat'
+       AND p.id < (SELECT id FROM picks WHERE rater = ?1 ORDER BY id DESC LIMIT 1 OFFSET 19)
+       AND NOT EXISTS (SELECT 1 FROM picks r WHERE r.rater = ?1 AND r.kind = 'repeat'
+         AND ((r.left_id = p.left_id AND r.right_id = p.right_id) OR (r.left_id = p.right_id AND r.right_id = p.left_id)))
+     ORDER BY RANDOM() LIMIT 1`,
+  ).bind(who.name).first<{ left_id: number; right_id: number }>();
+  return old ? queueRepeat(env, who, old.right_id, old.left_id) : null;
+}
+
+async function queueRepeat(env: Env, who: Rater, left_id: number, right_id: number) {
+  const q = await env.DB.prepare(
+    `INSERT INTO pair_queue (left_id, right_id, kind, batch, served_to, served_at)
+     VALUES (?1, ?2, 'repeat', 'repeat', ?3, datetime('now')) RETURNING id`,
+  ).bind(left_id, right_id, who.name).first<{ id: number }>();
+  return { queue_id: q!.id, left_id, right_id };
+}
+
 async function nextPair(env: Env, who: Rater) {
+  const repeat = await repeatPair(env, who);
+  if (repeat) return repeat;
   // Claim the oldest open pair; a pair served but unanswered for 10 minutes
-  // goes back into the pool.
+  // goes back into the pool. Repeats belong to the rater they were made for.
   const row = await env.DB.prepare(
     `UPDATE pair_queue SET served_to = ?1, served_at = datetime('now')
      WHERE id = (
        SELECT id FROM pair_queue
-       WHERE done_at IS NULL AND (served_at IS NULL OR served_at < datetime('now', '-10 minutes'))
+       WHERE done_at IS NULL AND kind != 'repeat' AND (served_at IS NULL OR served_at < datetime('now', '-10 minutes'))
        ORDER BY id LIMIT 1)
      RETURNING id, left_id, right_id`,
   )
@@ -131,12 +159,16 @@ async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionCont
 // same pair again. Skips can be taken back too.
 async function undoPick(env: Env, who: Rater) {
   const last = await env.DB.prepare(
-    `SELECT id, left_id, right_id, winner_id, tie FROM picks
+    `SELECT id, left_id, right_id, winner_id, tie, kind FROM picks
      WHERE rater = ?1 AND created_at > datetime('now', '-30 minutes') ORDER BY id DESC LIMIT 1`,
-  ).bind(who.name).first<{ id: number; left_id: number; right_id: number; winner_id: number | null; tie: number }>();
+  ).bind(who.name).first<{ id: number; left_id: number; right_id: number; winner_id: number | null; tie: number; kind: string }>();
   if (!last) return json({ error: "nothing to undo" }, 404);
   await env.DB.prepare("DELETE FROM picks WHERE id = ?1").bind(last.id).run();
-  const pair = await withPhotos(env, { queue_id: null, left_id: last.left_id, right_id: last.right_id });
+  // A repeat stays a repeat, so the new answer doesn't count twice in training.
+  const again = last.kind === "repeat"
+    ? await queueRepeat(env, who, last.left_id, last.right_id)
+    : { queue_id: null, left_id: last.left_id, right_id: last.right_id };
+  const pair = await withPhotos(env, again);
   return json({ ...pair, was_pick: last.winner_id !== null || last.tie === 1 });
 }
 
@@ -147,6 +179,17 @@ async function maybeRetrain(env: Env) {
   ).first<{ picks: number; trained: number | null }>();
   if (row && row.trained !== null && row.picks - row.trained >= RETRAIN_EVERY) await retrain(env);
   else if (row && row.trained === 0 && row.picks >= 5) await retrain(env);
+}
+
+// A comparison model reloaded by the pipeline comes back untrained (and so
+// does the straight line right after it became the ranker): fit them before
+// the scores page shows blanks.
+async function retrainIfStale(env: Env) {
+  const r = await env.DB.prepare(
+    `SELECT (SELECT n_picks >= ?1 AND params_line IS NULL FROM model WHERE id = 1)
+       OR EXISTS (SELECT 1 FROM alt_models m WHERE m.params IS NULL AND EXISTS (SELECT 1 FROM alt_z z WHERE z.key = m.key)) AS stale`,
+  ).bind(MIN_PICKS).first<{ stale: number }>();
+  if (r?.stale) await retrain(env);
 }
 
 // Face-geometry numbers for the picking page's "Golden ratio" toggle: each rule
@@ -172,13 +215,13 @@ async function geometryPercentiles(env: Env) {
 async function results(env: Env, who: string | null, mode: string | null = null) {
   if (who) return raterResults(env, who);
   const model = await env.DB.prepare(
-    `SELECT active, heldout_hills, heldout_one, heldout_line, n_test, split_by, n_picks, trained_at, init, params_one
+    `SELECT active, heldout_hills, heldout_one, heldout_line, n_test, split_by, n_picks, trained_at, init, params, params_one
      FROM model WHERE id = 1`,
   ).first<Record<string, unknown>>();
-  const oneParams = model?.params_one as string | null;
-  const alternates = (await env.DB.prepare(`SELECT key, heldout, heldout_one, heldout_fixed, fixed IS NOT NULL AS has_fixed,
+  const oneParams = model?.params_one as string | null, hillsParams = model?.params as string | null;
+  const alternates = (await env.DB.prepare(`SELECT key, heldout, heldout_one, heldout_line, heldout_fixed, fixed IS NOT NULL AS has_fixed,
        EXISTS (SELECT 1 FROM alt_z z WHERE z.key = m.key) AS has_z, n_picks FROM alt_models m ORDER BY key`).all()).results;
-  if (model) delete model.params_one;
+  if (model) { delete model.params_one; delete model.params; }
   const picks = await env.DB.prepare(
     `SELECT COUNT(*) AS decided, SUM(tie) AS ties, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters
      FROM picks WHERE ${ANSWERED}`,
@@ -192,28 +235,31 @@ async function results(env: Env, who: string | null, mode: string | null = null)
      FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id ORDER BY a.score DESC NULLS LAST, a.id`,
   ).all<Record<string, unknown>>();
   let peakGender: (string | null)[] | null = null;
-  if (mode && mode !== "one" && mode !== "hills") {
-    // Model 2 (another embedding), trained on the same picks. "m2:one" is
-    // that embedding with one hill per group.
+  if (mode && mode !== "one" && mode !== "hills" && mode !== "line") {
+    // Model 2 (another embedding), trained on the same picks. "m2" is that
+    // embedding with many hills, "m2:one" one hill per group, "m2:line" the
+    // straight arrow (clusters still from its hills).
     const [key, variant] = mode.split(":");
     const alt = await loadAlternate(env, key);
     const params = variant === "one" ? alt?.paramsOne : alt?.params;
     const h = params ? hillsFrom(JSON.parse(params)) : null;
+    const line = variant === "line" && alt?.paramsLine ? arrowFrom(JSON.parse(alt.paramsLine)) : null;
     peakGender = h ? h.pg : alt ? (alt.init.peak_gender ?? []) : [];
     if (alt && !alt.zs.size && alt.fixed) {
       // A fixed rule ("Golden ratio"): no clusters, ranked by its own score.
       for (const f of faces) { f.score = alt.fixed[f.id as number] ?? null; f.look = null; f.score_std = null; }
     } else for (const f of faces) {
       const z = alt?.zs.get(f.id as number), g = f.gender as string | null;
-      f.score = h && z ? h.score(z, g) : null;
+      f.score = !z ? null : variant === "line" ? (line ? line.score(z) : null) : h ? h.score(z, g) : null;
       f.look = h && z ? h.hill(z, g) : null;
       f.score_std = null;
     }
     faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
   }
-  if (mode === "one") {
-    // Same page, ranked by the one-hill-per-group model instead.
-    const one = oneParams ? hillsFrom(JSON.parse(oneParams)) : null;
+  if (mode === "one" || mode === "hills") {
+    // Same page, ranked by Model 1's many-hills or one-hill-per-group model.
+    const p = mode === "one" ? oneParams : hillsParams;
+    const one = p ? hillsFrom(JSON.parse(p)) : null;
     peakGender = one ? one.pg : [];
     const zs = new Map(
       (await env.DB.prepare("SELECT id, z FROM applicants WHERE z IS NOT NULL").all<{ id: number; z: string }>())
@@ -231,7 +277,7 @@ async function results(env: Env, who: string | null, mode: string | null = null)
   if (model) delete model.init;
   return json({
     model: {
-      ...model, mode: mode ?? "hills", hills: init?.peaks?.length ?? 0, alternates,
+      ...model, mode: mode ?? "line", hills: init?.peaks?.length ?? 0, alternates,
       peak_gender: peakGender ?? init?.peak_gender ?? [],
       retrain_every: RETRAIN_EVERY,
     },
@@ -365,21 +411,26 @@ export default {
     }
     if (url.pathname === "/api/pick" && req.method === "POST") return recordPick(req, env, who, ctx);
     if (url.pathname === "/api/undo" && req.method === "POST") return undoPick(env, who);
-    const mode = url.searchParams.get("mode"); // "one" = one hill per group, for comparison
-    if (url.pathname === "/api/results" && req.method === "GET") return results(env, only, mode);
+    // Default "line" (the ranker); "hills" / "one" = Model 1's cluster models; "m2", "m2:one", "m2:line" = Model 2...
+    const mode = url.searchParams.get("mode");
+    if (url.pathname === "/api/results" && req.method === "GET") {
+      await retrainIfStale(env);
+      return results(env, only, mode);
+    }
     if (url.pathname === "/api/map" && req.method === "GET") {
       const gender = url.searchParams.get("gender");
-      if (!only && mode && mode !== "hills") {
+      if (!only && mode && mode !== "line") {
         const r = (await (await results(env, null, mode)).json()) as { faces: { id: number; score: number | null; look: number | null }[] };
         const faces = new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }]));
-        if (mode === "one") {
-          const m = await env.DB.prepare("SELECT params_one FROM model WHERE id = 1").first<{ params_one: string | null }>();
-          return json(await territory(env, { params: m?.params_one ?? null, faces }, gender));
+        if (mode === "one" || mode === "hills") {
+          const m = await env.DB.prepare("SELECT params, params_one FROM model WHERE id = 1")
+            .first<{ params: string | null; params_one: string | null }>();
+          return json(await territory(env, { params: (mode === "one" ? m?.params_one : m?.params) ?? null, faces }, gender));
         }
         const [key, variant] = mode.split(":");
         const alt = await loadAlternate(env, key);
         if (!alt || !alt.zs.size) return json({ faces: [], peaks: [], grid: null }); // a fixed rule has no map
-        const params = variant === "one" ? alt.paramsOne : alt.params;
+        const params = variant === "one" ? alt.paramsOne : alt.params; // the line's map shows its hills' clusters
         return json(await territory(env, { params, faces, zs: alt.zs, init: alt.init }, gender));
       }
       if (!only) return json(await territory(env, undefined, gender));
@@ -401,11 +452,11 @@ export default {
         env.DB.prepare("DELETE FROM rater_models"),
         env.DB.prepare("UPDATE applicants SET score = NULL, score_std = NULL, model = NULL, updated_at = NULL"),
         env.DB.prepare(
-          `UPDATE model SET params = NULL, active = NULL, heldout_hills = NULL, heldout_line = NULL,
+          `UPDATE model SET params = NULL, active = NULL, heldout_hills = NULL, heldout_line = NULL, params_line = NULL,
            params_one = NULL, heldout_one = NULL, n_test = NULL, split_by = NULL, n_picks = 0, trained_at = NULL WHERE id = 1`,
         ),
         env.DB.prepare(
-          "UPDATE alt_models SET params = NULL, heldout = NULL, params_one = NULL, heldout_one = NULL, heldout_fixed = NULL, n_picks = 0, trained_at = NULL",
+          "UPDATE alt_models SET params = NULL, heldout = NULL, params_one = NULL, heldout_one = NULL, params_line = NULL, heldout_line = NULL, heldout_fixed = NULL, n_picks = 0, trained_at = NULL",
         ),
       ]);
       return json({ ok: true });

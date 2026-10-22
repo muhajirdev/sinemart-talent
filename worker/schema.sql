@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS model (
   active        TEXT,
   heldout_hills REAL,                      -- held-out agreement, hills model
   heldout_line  REAL,                      -- held-out agreement, straight arrow
+  params_line   TEXT,                      -- the straight arrow: the live ranker since 2026-10-22
   params_one    TEXT,                      -- comparison model: one hill per group (cewek, cowok)
   heldout_one   REAL,                      -- held-out agreement, one hill per group
   n_test        INTEGER,
@@ -100,6 +101,8 @@ CREATE TABLE IF NOT EXISTS alt_models (
   heldout    REAL,
   params_one  TEXT,                        -- the same embedding with one hill per group
   heldout_one REAL,
+  params_line  TEXT,                       -- the same embedding with a straight arrow
+  heldout_line REAL,
   fixed       TEXT,                        -- optional never-trained score per applicant (JSON {id: score})
   heldout_fixed REAL,                      -- its agreement with the same held-out picks
   n_picks    INTEGER NOT NULL DEFAULT 0,
