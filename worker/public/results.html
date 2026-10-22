@@ -187,7 +187,7 @@
     $("model").innerHTML = `
       <div class="stats">
         <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "line" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, straight line)"} · ${isRule(m.mode, m.alternates) ? `face proportions, symmetry and averageness${m.mode === "geo_raw" ? " measured on the photos as they are" : " measured with faces straightened"}; no clusters` : state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
-        <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.total - p.decided} skipped)</span></div>
+        <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.neithers || 0} "keduanya kurang menarik", ${p.total - p.decided} skipped)</span></div>
         <div class="stat"><b>${pct(m.heldout_line)}</b><span>Model 1 straight line: held-out agreement</span></div>
         <div class="stat" id="ceil"><b>–</b><span>Raters repeating their own pick (no repeats yet)</span></div>
       </div>
@@ -370,7 +370,7 @@
     const r = await api(`/api/battles/${id}`);
     if (!r.ok || lb.id !== id) return;
     const rows = await r.json();
-    const word = { won: "Won", lost: "Lost", tie: "Sama saja", skip: "Skipped" };
+    const word = { won: "Won", lost: "Lost", tie: "Sama saja", neither: "Keduanya kurang menarik", skip: "Skipped" };
     const decided = rows.filter((b) => b.result !== "skip").length;
     $("lbHist").innerHTML = `<h3>Battle history · ${decided} decided, ${rows.length - decided} skipped</h3>` + (rows.length
       ? `<ol>${rows.map((b) => `<li class="${b.result}"><b class="${b.result}">${word[b.result]}</b> vs
