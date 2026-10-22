@@ -135,15 +135,6 @@ CREATE TABLE IF NOT EXISTS face_points (
   pitch     REAL
 );
 
--- The team's call on a person from the Shortlist page: 'call' (panggil) or
--- 'skip'. One row per person; the latest decision wins. Never feeds the score.
-CREATE TABLE IF NOT EXISTS decisions (
-  applicant_id INTEGER PRIMARY KEY,
-  status       TEXT NOT NULL,              -- call | skip
-  rater        TEXT NOT NULL,
-  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 -- Outside verdicts used only to check the model (e.g. 'sortir2026' = the
 -- 2026 human shortlist). Only aggregates leave the API, never per person,
 -- so raters can't be nudged by them.

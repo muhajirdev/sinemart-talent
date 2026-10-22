@@ -57,6 +57,12 @@
   .cmp th, .cmp td { padding: 4px 14px 4px 0; text-align: left; }
   .cmp th { color: var(--muted); font-weight: 500; }
   .chips button[aria-pressed="true"] { background: var(--fg); color: #111; border-color: var(--fg); }
+  .contrast h3 { font-size: 14px; margin: 10px 0 6px; color: var(--muted); font-weight: 500; }
+  .contrast .row { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; }
+  .contrast figure { margin: 0; position: relative; cursor: pointer; }
+  .contrast img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #808080; display: block; }
+  .contrast figcaption { position: absolute; left: 4px; top: 4px; background: #000b; border-radius: 999px; padding: 0 6px; font-size: 11px; }
+  .contrast .low img { outline: 2px solid #ff8a8066; }
   select { background: var(--card); color: var(--fg); border: 1px solid #555; border-radius: 10px; padding: 8px 10px; font-size: 15px; max-width: 100%; }
   .switch { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
   .switch label { color: var(--muted); font-size: 14px; }
@@ -93,7 +99,7 @@
 </style>
 </head>
 <body>
-<header><h1>Beauty scores · Lab</h1><div><a href="/">← Back to picking</a> · <a href="/shortlist.html">Shortlist</a></div></header>
+<header><h1>Beauty scores</h1><a href="/">← Back to picking</a></header>
 <div id="msg">Loading…</div>
 <div class="chips" id="gsw" hidden>
   <button data-g="f" aria-pressed="true">Cewek</button><button data-g="m" aria-pressed="false">Cowok</button>
@@ -119,6 +125,7 @@
     approximate; the scores below are exact.</p>
 </section>
 <section id="agree" class="card" hidden></section>
+<section id="contrast" class="card contrast" hidden></section>
 <h2 id="boardTitle" hidden>Leaderboard</h2>
 <div class="chips" id="chips"></div>
 <ol id="faces"></ol>
@@ -256,6 +263,7 @@
       .map(([v, label]) => `<button data-f="${v}" aria-pressed="${state.filter === v}">${label}</button>`).join("");
     $("chips").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.filter = b.dataset.f; renderBoard(); }));
     const list = d.faces.filter((f) => state.filter === "all" || String(f.look) === state.filter);
+    renderContrast(list);
     $("faces").innerHTML = list.map((f, i) => {
       const beat = beatOf(f);
       return `<li id="f${f.id}">
@@ -283,6 +291,31 @@
       if (!e.target.closest(".gfix")) openBox(Number(li.id.slice(1)));
     }));
   }
+
+  // Top vs bottom: the best and worst faces of the list above, side by side,
+  // so you can see what this model has learned. Tap a face for its photos.
+  function renderContrast(list) {
+    const scored = list.filter((f) => f.score != null), n = Math.min(8, Math.floor(scored.length / 2));
+    $("contrast").hidden = n < 2;
+    if (n < 2) return;
+    const fig = (f, i) => `<figure data-id="${f.id}"><img src="/img/${f.id}?t=${encodeURIComponent(token)}" alt="Applicant ${f.id}" loading="lazy">
+      <figcaption>#${i + 1}</figcaption></figure>`;
+    const top = scored.slice(0, n).map((f) => fig(f, scored.indexOf(f)));
+    const low = scored.slice(-n).reverse().map((f) => fig(f, scored.indexOf(f)));
+    $("contrast").innerHTML = `<h2>Top vs bottom</h2>${state.check ? `<p class="note" style="margin:0 0 6px">${state.check}</p>` : ""}
+      <h3>Highest ${n} of ${scored.length}</h3><div class="row">${top.join("")}</div>
+      <h3>Lowest ${n}</h3><div class="row low">${low.join("")}</div>`;
+    $("contrast").querySelectorAll("figure").forEach((el) => (el.onclick = () => openBox(Number(el.dataset.id))));
+  }
+
+  // How the main ranking compares with the team's own 2026 screening (totals only).
+  api("/api/check").then((r) => r.json()).then((rows) => {
+    const c = rows.find((x) => x.source === "sortir2026");
+    if (!c || c.auc == null) return;
+    state.check = `Check against the 2026 screening: ${c.passed_in_top50} of the ${c.passed} people who passed sit in the top 50 of their group (chance ≈ ${Math.round(c.expected_in_top50)}); `
+      + `a passed person outranks a not-passed one ${Math.round(c.auc * 100)}% of the time (chance = 50%). Main model only.`;
+    if (state.d) renderBoard();
+  }).catch(() => {});
 
   // Lightbox: one person large, face crop first, then every whole photo.
   const lb = { id: null, v: 0, n: 1 };

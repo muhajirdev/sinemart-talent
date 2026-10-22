@@ -301,52 +301,6 @@ async function setGender(req: Request, env: Env, ctx: ExecutionContext) {
   return json({ ok: true });
 }
 
-// Shortlist page: the top people of one group by the live ranking, with a
-// confidence badge and the team's call (panggil / skip). Rank is within the
-// whole group; the season and status filters only hide rows.
-const NEW_SEASON = 260000; // 2026 sign-ups are 260000 + sheet row (pipeline sinemart.sheet)
-
-async function shortlist(env: Env, url: URL) {
-  const g = url.searchParams.get("g") === "m" ? "m" : "f";
-  const season = url.searchParams.get("season") ?? "all";
-  const status = url.searchParams.get("status") ?? "open";
-  const n = Math.min(200, Math.max(10, Number(url.searchParams.get("n")) || 50));
-  const { results: rows } = await env.DB.prepare(
-    `SELECT a.id, a.score, a.score_std, d.status, d.rater AS decided_by,
-       (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos
-     FROM applicants a LEFT JOIN decisions d ON d.applicant_id = a.id
-     WHERE a.gender = ?1 AND a.score IS NOT NULL ORDER BY a.score DESC, a.id`,
-  ).bind(g).all<{ id: number; score: number; score_std: number | null; status: string | null; decided_by: string | null; n_photos: number }>();
-  const ranked = rows.map((r, i) => ({ ...r, rank: i + 1, season: r.id >= NEW_SEASON ? "2026" : "2021" }));
-  const shown = ranked.filter((r) =>
-    (season === "all" || r.season === season) &&
-    (status === "all" || (status === "open" ? !r.status : r.status === status)));
-  const top = shown.slice(0, n);
-  // "Yakin" = even one spread below its score, the person still beats the
-  // last place on this list; otherwise the model could still move them out.
-  const cutoff = top.length ? top[top.length - 1].score : 0;
-  const counts = { call: 0, skip: 0 };
-  for (const r of ranked) if (r.status === "call" || r.status === "skip") counts[r.status]++;
-  return json({
-    group: g, total: ranked.length, counts,
-    faces: top.map((r) => ({ ...r, sure: r.score_std != null && r.score - r.score_std > cutoff })),
-  });
-}
-
-async function decide(req: Request, env: Env, who: Rater) {
-  const { id, status } = (await req.json().catch(() => ({}))) as { id?: number; status?: string | null };
-  if (!Number.isInteger(id)) return json({ error: "id" }, 400);
-  if (status === "call" || status === "skip") {
-    await env.DB.prepare(
-      `INSERT INTO decisions (applicant_id, status, rater) VALUES (?1, ?2, ?3)
-       ON CONFLICT (applicant_id) DO UPDATE SET status = ?2, rater = ?3, updated_at = datetime('now')`,
-    ).bind(id, status, who.name).run();
-  } else {
-    await env.DB.prepare("DELETE FROM decisions WHERE applicant_id = ?1").bind(id).run();
-  }
-  return json({ ok: true });
-}
-
 // How the ranking compares with an outside human screening, in aggregate
 // only: the chance a passed person outranks a not-passed one of the same
 // group (0.5 = no better than chance), and how many passed land in the top 50.
@@ -436,8 +390,6 @@ export default {
       return json(await territory(env, { params: r.params, faces: new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }])) }, gender));
     }
     if (url.pathname === "/api/gender" && req.method === "POST") return setGender(req, env, ctx);
-    if (url.pathname === "/api/shortlist" && req.method === "GET") return shortlist(env, url);
-    if (url.pathname === "/api/decide" && req.method === "POST") return decide(req, env, who);
     if (url.pathname === "/api/check" && req.method === "GET") return json(await outsideCheck(env));
     if (url.pathname === "/api/raters" && req.method === "GET") return json(await raterAgreement(env));
     if (url.pathname === "/api/retrain" && req.method === "POST") return json(await retrain(env));
