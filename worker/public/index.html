@@ -63,6 +63,13 @@
   #login input { background: #333; color: var(--fg); border: 1px solid #555; border-radius: 10px; padding: 12px; font-size: 16px; }
   #login button { background: var(--accent); color: #111; border: 0; border-radius: 999px; padding: 12px; font-size: 16px; font-weight: 600; }
   #loginErr { color: #ff8a80; font-size: 14px; min-height: 1em; }
+  #fix { background: #222; color: var(--fg); border: 0; border-radius: 16px; padding: 18px; width: min(340px, calc(100% - 32px)); }
+  #fix::backdrop { background: #000a; }
+  #fix p { margin: 0 0 12px; font-weight: 700; }
+  #fix button { display: block; width: 100%; text-align: left; margin-top: 8px; background: #333; color: var(--fg); border: 0;
+    border-radius: 12px; padding: 12px 14px; font-size: 15px; cursor: pointer; }
+  #fix button small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  #fix button.ghost { background: none; text-align: center; color: var(--muted); }
   #who { color: var(--muted); font-size: 14px; }
   #who button { all: unset; color: var(--accent); cursor: pointer; margin-left: 6px; }
 </style>
@@ -83,14 +90,14 @@
 <main id="pair" class="hide">
   <section class="card" id="left">
     <div class="photo"><img alt="Peserta kiri"><span class="label"></span>
-      <span class="tools"><button class="gfix hide" data-side="left"></button><button class="noise" data-side="left">Foto bermasalah</button></span>
+      <span class="tools"><button class="noise" data-side="left">Foto bermasalah</button></span>
       <button class="nav prev" aria-label="Foto sebelumnya">‹</button><button class="nav next" aria-label="Foto berikutnya">›</button>
       <span class="dots"></span><span class="geo hide"></span></div>
     <button class="pick" data-side="left">Pilih yang ini<kbd>1</kbd></button>
   </section>
   <section class="card" id="right">
     <div class="photo"><img alt="Peserta kanan"><span class="label"></span>
-      <span class="tools"><button class="gfix hide" data-side="right"></button><button class="noise" data-side="right">Foto bermasalah</button></span>
+      <span class="tools"><button class="noise" data-side="right">Foto bermasalah</button></span>
       <button class="nav prev" aria-label="Foto sebelumnya">‹</button><button class="nav next" aria-label="Foto berikutnya">›</button>
       <span class="dots"></span><span class="geo hide"></span></div>
     <button class="pick" data-side="right">Pilih yang ini<kbd>2</kbd></button>
@@ -102,6 +109,12 @@
   <button id="skip" title="Tidak bisa menilai: foto jelek, atau kamu kenal orangnya">Lewati</button>
 </footer>
 <div class="keys hide" id="keys">← → ganti foto · 1 / 2 pilih · = sama saja · S lewati · U batalkan</div>
+<dialog id="fix">
+  <p>Apa masalahnya?</p>
+  <button id="fixGender"></button>
+  <button id="fixNoise">Bukan foto wajah / orang lain<small>Tidak muncul lagi di pilihan dan skor</small></button>
+  <button id="fixCancel" class="ghost">Batal</button>
+</dialog>
 <div id="toast" class="hide" role="status"><span id="toastText"></span><button id="toastUndo">Batalkan</button></div>
 <script src="/phi.js"></script>
 <script>
@@ -282,11 +295,6 @@
     current = p;
     view = 0;
     showView("left"); showView("right"); showGeo();
-    for (const side of ["left", "right"]) {
-      const b = $(side).querySelector(".gfix"), g = p[side + "_gender"];
-      b.classList.toggle("hide", !GNAME[g]);
-      b.textContent = `Bukan ${GNAME[g]}?`;
-    }
     document.querySelectorAll(".card").forEach((b) => b.classList.remove("chosen"));
     $("msg").classList.add("hide"); $("pair").classList.remove("hide"); $("bar").classList.remove("hide");
     $("keys").classList.remove("hide");
@@ -307,43 +315,41 @@
     toastTimer = setTimeout(() => $("toast").classList.add("hide"), 5000);
   }
 
-  // Wrong group: move the person to the other one (every model retrains) and
-  // show the next pair. Nothing is recorded for this pair.
+  // "Foto bermasalah": a small menu. Wrong group = move the person to the
+  // other one (every model retrains); bad data (not a face, someone else, a
+  // document) = out of battles and scores, listed on the scores page with
+  // Restore. Either way the next pair shows and nothing is recorded for this one.
   const GNAME = { f: "cewek", m: "cowok" };
-  async function fixGender(side) {
+  let fixSide = null;
+  function openFix(side) {
     if (busy || !current) return;
-    const id = current[side + "_id"], other = current[side + "_gender"] === "f" ? "m" : "f";
-    if (!confirm(`Pindahkan orang ini ke ${GNAME[other]}? Dia akan dibandingkan dengan sesama ${GNAME[other]}.`)) return;
+    fixSide = side;
+    const g = current[side + "_gender"], other = g === "f" ? "m" : "f";
+    $("fixGender").classList.toggle("hide", !GNAME[g]);
+    $("fixGender").innerHTML = `Bukan ${GNAME[g]}<small>Pindahkan ke ${GNAME[other]}</small>`;
+    $("fix").showModal();
+  }
+  async function fix(path, body, done) {
+    $("fix").close();
+    if (busy || !current) return;
     busy = true;
     try {
-      const r = await api("/api/gender", { method: "POST", body: JSON.stringify({ id, gender: other }) });
+      const r = await api(path, { method: "POST", body: JSON.stringify(body) });
       if (!r.ok) throw new Error();
-      toast(`Dipindah ke ${GNAME[other]}`);
-      ahead = []; // queued pairs may still pair them with the old group
+      toast(done);
+      ahead = []; // queued pairs may still show this person
       render(await take());
     } catch (_) {
-      toast("Gagal memindahkan. Coba lagi.");
+      toast("Gagal menyimpan. Coba lagi.");
     } finally { busy = false; }
   }
-  document.querySelectorAll(".gfix").forEach((b) => (b.onclick = () => fixGender(b.dataset.side)));
-
-  // Bad data (not a face, someone else's photo, a document): take the person
-  // out of battles and scores. The scores page lists them, with Restore.
-  async function markNoise(side) {
-    if (busy || !current) return;
-    if (!confirm("Tandai foto orang ini bermasalah? Dia tidak akan muncul lagi di pilihan dan skor.")) return;
-    busy = true;
-    try {
-      const r = await api("/api/noise", { method: "POST", body: JSON.stringify({ id: current[side + "_id"], noise: true }) });
-      if (!r.ok) throw new Error();
-      toast("Ditandai bermasalah");
-      ahead = [];
-      render(await take());
-    } catch (_) {
-      toast("Gagal menandai. Coba lagi.");
-    } finally { busy = false; }
-  }
-  document.querySelectorAll(".noise").forEach((b) => (b.onclick = () => markNoise(b.dataset.side)));
+  $("fixGender").onclick = () => {
+    const other = current[fixSide + "_gender"] === "f" ? "m" : "f";
+    fix("/api/gender", { id: current[fixSide + "_id"], gender: other }, `Dipindah ke ${GNAME[other]}`);
+  };
+  $("fixNoise").onclick = () => fix("/api/noise", { id: current[fixSide + "_id"], noise: true }, "Ditandai bermasalah");
+  $("fixCancel").onclick = () => $("fix").close();
+  document.querySelectorAll(".noise").forEach((b) => (b.onclick = () => openFix(b.dataset.side)));
 
   async function pick(side) {
     if (busy || !current) return;
