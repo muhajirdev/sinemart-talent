@@ -1,5 +1,8 @@
-// Retrain the hills model from every pick in D1, rescore everyone, refill
-// the pair queue. Runs automatically every RETRAIN_EVERY picks and on demand.
+// Retrain from every pick in D1, rescore everyone, refill the pair queue.
+// Runs automatically every RETRAIN_EVERY picks and on demand. The straight
+// arrow ranks and picks the battles (it won on held-out picks, 2026-10-22);
+// the hills and one-hill models are refitted alongside as comparisons, and
+// the hills still name each person's cluster (look).
 // The same fit also runs on one rater's picks alone (their personal taste);
 // those models are cached in rater_models and never touch the shared scores.
 
@@ -9,6 +12,9 @@ export const RETRAIN_EVERY = 10;
 export const MIN_PICKS = 5;
 // A pick that tells the model something: a winner, or "Sama saja" (tie). Skips don't.
 export const ANSWERED = "(winner_id IS NOT NULL OR tie = 1)";
+// About 1 in REPEAT_EVERY battles re-asks a pair the rater already answered.
+// Those answers measure how consistent people are, so they stay out of training.
+export const REPEAT_EVERY = 20;
 
 type Env = { DB: D1Database };
 export type Params = { A: number[]; q: number[]; r: number; K: number; pg?: (string | null)[] };
@@ -35,7 +41,7 @@ export async function loadData(env: Env, rater: string | null = null) {
     await env.DB.prepare(
       `SELECT rater, tie, COALESCE(winner_id, left_id) AS winner_id,
          CASE WHEN winner_id = right_id THEN left_id ELSE right_id END AS loser_id
-       FROM picks WHERE ${ANSWERED} AND (?1 IS NULL OR rater = ?1) ORDER BY id`,
+       FROM picks WHERE ${ANSWERED} AND kind != 'repeat' AND (?1 IS NULL OR rater = ?1) ORDER BY id`,
     )
       .bind(rater)
       .all<{ rater: string; tie: number; winner_id: number; loser_id: number }>()
@@ -47,6 +53,13 @@ export async function loadData(env: Env, rater: string | null = null) {
   }));
   return { peaks, peakGroup, faces, index, Z, G, picks };
 }
+
+export function arrowFrom(p: { w: number[] }) {
+  const a = new Arrow(p.w.length);
+  a.w = Float64Array.from(p.w);
+  return a;
+}
+const arrowJson = (a: Arrow) => JSON.stringify({ w: Array.from(a.w) });
 
 export function hillsFrom(p: Params) {
   const h = new Hills(Array.from({ length: p.K }, (_, k) => p.q.slice(k * p.r, (k + 1) * p.r)), p.pg ?? []);
@@ -89,8 +102,8 @@ export function oneHill(Z: number[][], G: (string | null)[]) {
 // picks and the same held-out split, each in its own taste space. They only
 // feed the scores page; battles keep using the main model.
 export async function loadAlternate(env: Env, key: string) {
-  const row = await env.DB.prepare("SELECT init, params, params_one, fixed FROM alt_models WHERE key = ?1")
-    .bind(key).first<{ init: string; params: string | null; params_one: string | null; fixed: string | null }>();
+  const row = await env.DB.prepare("SELECT init, params, params_one, params_line, fixed FROM alt_models WHERE key = ?1")
+    .bind(key).first<{ init: string; params: string | null; params_one: string | null; params_line: string | null; fixed: string | null }>();
   if (!row) return null;
   const zs = new Map(
     (await env.DB.prepare("SELECT applicant_id AS id, z FROM alt_z WHERE key = ?1").bind(key).all<{ id: number; z: string }>())
@@ -98,7 +111,7 @@ export async function loadAlternate(env: Env, key: string) {
   );
   const init = JSON.parse(row.init) as { peaks: number[][]; peak_gender?: string[] };
   const fixed = row.fixed ? (JSON.parse(row.fixed) as Record<string, number>) : null;
-  return { init, params: row.params, paramsOne: row.params_one, fixed, zs };
+  return { init, params: row.params, paramsOne: row.params_one, paramsLine: row.params_line, fixed, zs };
 }
 
 async function fitAlternates(
@@ -109,7 +122,8 @@ async function fitAlternates(
   for (const { key } of keys) {
     const alt = await loadAlternate(env, key);
     if (!alt) continue;
-    let heldout: number | null = null, heldoutOne: number | null = null, heldoutFixed: number | null = null;
+    let heldout: number | null = null, heldoutOne: number | null = null, heldoutLine: number | null = null;
+    let heldoutFixed: number | null = null;
     if (test.length >= 3 && alt.fixed) {
       // A never-trained score (missing people count as average, 0).
       heldoutFixed = agreement(faces.map((f) => alt.fixed![f.id] ?? 0), test);
@@ -128,14 +142,18 @@ async function fitAlternates(
       heldout = agreement(Z.map((z, i) => h.score(z, G[i])), test);
       const o = oneHill(Z, G).fit(Z, train, G);
       heldoutOne = agreement(Z.map((z, i) => o.score(z, G[i])), test);
+      const a = new Arrow(Z[0].length).fit(Z, train);
+      heldoutLine = agreement(Z.map((z) => a.score(z)), test);
     }
     const main = fresh().fit(Z, picks, G);
     const one = oneHill(Z, G).fit(Z, picks, G);
+    const line = new Arrow(Z[0].length).fit(Z, picks);
     stmts.push(
       env.DB.prepare(
         `UPDATE alt_models SET params = ?1, heldout = ?2, params_one = ?3, heldout_one = ?4, heldout_fixed = ?5,
-           n_picks = ?6, trained_at = datetime('now') WHERE key = ?7`,
-      ).bind(JSON.stringify(main), heldout, JSON.stringify(one), heldoutOne, heldoutFixed, picks.length, key),
+           n_picks = ?6, trained_at = datetime('now'), params_line = ?7, heldout_line = ?8 WHERE key = ?9`,
+      ).bind(JSON.stringify(main), heldout, JSON.stringify(one), heldoutOne, heldoutFixed, picks.length,
+        arrowJson(line), heldoutLine, key),
     );
   }
   return stmts;
@@ -162,14 +180,16 @@ export async function retrain(env: Env) {
   }
   const one = oneHill(Z, G).fit(Z, picks, G);
 
-  // The ranker: hills on every pick from every rater. Std = spread of 3 bootstrap fits.
+  // The ranker: the straight arrow on every pick from every rater. Std =
+  // spread of 3 bootstrap fits. The hills fit still names each cluster.
   const main = fresh().fit(Z, picks, G);
-  const scores = Z.map((z, i) => main.score(z, G[i]));
+  const line = new Arrow(Z[0].length).fit(Z, picks);
+  const scores = Z.map((z) => line.score(z));
   const hill = Z.map((z, i) => main.hill(z, G[i]));
   const runs = [0, 1, 2].map(() => {
     const boot = picks.map(() => picks[Math.floor(rand() * picks.length)]);
-    const b = fresh().fit(Z, boot, G, 150);
-    const s = Z.map((z, i) => b.score(z, G[i]));
+    const b = new Arrow(Z[0].length).fit(Z, boot, 150);
+    const s = Z.map((z) => b.score(z));
     // Centre within each group: scores only compare inside a group.
     const mean = new Map<string | null, number>();
     for (const g of new Set(G)) {
@@ -189,10 +209,10 @@ export async function retrain(env: Env) {
   const pairs = groupedPairs(scores, std, nPairs, rand, hill, G);
   const stmts: D1PreparedStatement[] = faces.map((f, i) =>
     env.DB.prepare(
-      "UPDATE applicants SET score = ?1, score_std = ?2, look = ?3, model = 'hills', updated_at = ?4 WHERE id = ?5",
+      "UPDATE applicants SET score = ?1, score_std = ?2, look = ?3, model = 'line', updated_at = ?4 WHERE id = ?5",
     ).bind(scores[i], std[i], hill[i], now, f.id),
   );
-  // Every unanswered pair goes, including ones on screen now: they were chosen
+  // Every unanswered pair goes (repeats too: the next one is drawn when served), including ones on screen now: they were chosen
   // by the old model (and may predate a gender fix). Their picks still count.
   stmts.push(env.DB.prepare("DELETE FROM pair_queue WHERE done_at IS NULL"));
   for (const p of pairs) {
@@ -204,9 +224,10 @@ export async function retrain(env: Env) {
   }
   stmts.push(
     env.DB.prepare(
-      `UPDATE model SET params = ?1, active = 'hills', heldout_hills = ?2, heldout_line = ?3, n_test = ?4,
-       split_by = ?5, n_picks = ?6, trained_at = ?7, params_one = ?8, heldout_one = ?9 WHERE id = 1`,
-    ).bind(JSON.stringify(main), heldoutHills, heldoutLine, test.length, by, picks.length, now, JSON.stringify(one), heldoutOne),
+      `UPDATE model SET params = ?1, active = 'line', heldout_hills = ?2, heldout_line = ?3, n_test = ?4,
+       split_by = ?5, n_picks = ?6, trained_at = ?7, params_one = ?8, heldout_one = ?9, params_line = ?10 WHERE id = 1`,
+    ).bind(JSON.stringify(main), heldoutHills, heldoutLine, test.length, by, picks.length, now, JSON.stringify(one), heldoutOne,
+      arrowJson(line)),
   );
   stmts.push(...(await fitAlternates(env, faces, G, picks, train, test)));
   await runBatches(env.DB, stmts);
@@ -223,9 +244,9 @@ export async function retrain(env: Env) {
 export async function raterAgreement(env: Env) {
   const all = await loadData(env);
   if (!all) return { raters: [], cross: [], same_pair: [] };
-  const team = await env.DB.prepare("SELECT params FROM model WHERE id = 1").first<{ params: string | null }>();
-  const teamModel = team?.params ? hillsFrom(JSON.parse(team.params)) : null;
-  const teamScores = teamModel ? all.Z.map((z, i) => teamModel.score(z, all.G[i])) : null;
+  const team = await env.DB.prepare("SELECT params_line FROM model WHERE id = 1").first<{ params_line: string | null }>();
+  const teamModel = team?.params_line ? arrowFrom(JSON.parse(team.params_line)) : null;
+  const teamScores = teamModel ? all.Z.map((z) => teamModel.score(z)) : null;
   const names = [...new Set(all.picks.map((p) => p.rater))].sort();
   const byRater = new Map(names.map((n) => [n, all.picks.filter((p) => p.rater === n)]));
   const models = new Map<string, number[] | null>();
@@ -261,5 +282,21 @@ export async function raterAgreement(env: Env) {
       if (n) same_pair.push({ a: names[i], b: names[j], n, agree: match / n });
     }
   }
-  return { raters, cross, same_pair };
+  return { raters, cross, same_pair, repeat: await repeatAgreement(env) };
+}
+
+// The same rater on the same pair twice (a repeat battle against their
+// latest earlier answer). How often they pick the same face again is the
+// ceiling for any model: nobody can predict them better than they agree
+// with themselves. Only answers with a winner both times count.
+async function repeatAgreement(env: Env) {
+  const { results } = await env.DB.prepare(
+    `SELECT r.rater, r.winner_id = o.winner_id AS same FROM picks r JOIN picks o ON o.id = (
+       SELECT MAX(x.id) FROM picks x WHERE x.rater = r.rater AND x.kind != 'repeat' AND x.id < r.id
+         AND ((x.left_id = r.left_id AND x.right_id = r.right_id) OR (x.left_id = r.right_id AND x.right_id = r.left_id)))
+     WHERE r.kind = 'repeat' AND r.winner_id IS NOT NULL AND o.winner_id IS NOT NULL`,
+  ).all<{ rater: string; same: number }>();
+  const names = [...new Set(results.map((r) => r.rater))].sort();
+  const sum = (rows: { same: number }[]) => ({ n: rows.length, same: rows.length ? rows.filter((r) => r.same).length / rows.length : null });
+  return { ...sum(results), raters: names.map((name) => ({ name, ...sum(results.filter((r) => r.rater === name)) })) };
 }

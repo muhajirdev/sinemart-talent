@@ -31,3 +31,8 @@ CREATE TABLE IF NOT EXISTS face_points (
   pitch     REAL
 );
 ALTER TABLE face_points ADD COLUMN front TEXT;
+
+-- 2026-10-22: the straight arrow ranks and picks battles; clusters are comparisons.
+ALTER TABLE model ADD COLUMN params_line TEXT;
+ALTER TABLE alt_models ADD COLUMN params_line TEXT;
+ALTER TABLE alt_models ADD COLUMN heldout_line REAL;
