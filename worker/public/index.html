@@ -30,6 +30,10 @@
   .photo .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%;
     border: 0; background: #000a; color: #fff; font-size: 22px; line-height: 40px; padding: 0; cursor: pointer; }
   .photo .nav.prev { left: 8px; } .photo .nav.next { right: 8px; }
+  /* Fix a wrong cewek/cowok guess right where it shows up. */
+  .photo .tools { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .photo .tools button { border: 0; background: #000a; color: #fff; border-radius: 999px;
+    padding: 4px 10px; font: 600 12px system-ui; cursor: pointer; }
   .photo .geo { position: absolute; left: 8px; right: 8px; bottom: 26px; background: #000b; color: #fff; border-radius: 10px;
     padding: 5px 9px; font: 600 12px system-ui; text-align: center; pointer-events: none; }
   .photo svg.phi { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -79,12 +83,14 @@
 <main id="pair" class="hide">
   <section class="card" id="left">
     <div class="photo"><img alt="Peserta kiri"><span class="label"></span>
+      <span class="tools"><button class="gfix hide" data-side="left"></button><button class="noise" data-side="left">Foto bermasalah</button></span>
       <button class="nav prev" aria-label="Foto sebelumnya">‹</button><button class="nav next" aria-label="Foto berikutnya">›</button>
       <span class="dots"></span><span class="geo hide"></span></div>
     <button class="pick" data-side="left">Pilih yang ini<kbd>1</kbd></button>
   </section>
   <section class="card" id="right">
     <div class="photo"><img alt="Peserta kanan"><span class="label"></span>
+      <span class="tools"><button class="gfix hide" data-side="right"></button><button class="noise" data-side="right">Foto bermasalah</button></span>
       <button class="nav prev" aria-label="Foto sebelumnya">‹</button><button class="nav next" aria-label="Foto berikutnya">›</button>
       <span class="dots"></span><span class="geo hide"></span></div>
     <button class="pick" data-side="right">Pilih yang ini<kbd>2</kbd></button>
@@ -276,6 +282,11 @@
     current = p;
     view = 0;
     showView("left"); showView("right"); showGeo();
+    for (const side of ["left", "right"]) {
+      const b = $(side).querySelector(".gfix"), g = p[side + "_gender"];
+      b.classList.toggle("hide", !GNAME[g]);
+      b.textContent = `Bukan ${GNAME[g]}?`;
+    }
     document.querySelectorAll(".card").forEach((b) => b.classList.remove("chosen"));
     $("msg").classList.add("hide"); $("pair").classList.remove("hide"); $("bar").classList.remove("hide");
     $("keys").classList.remove("hide");
@@ -295,6 +306,44 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => $("toast").classList.add("hide"), 5000);
   }
+
+  // Wrong group: move the person to the other one (every model retrains) and
+  // show the next pair. Nothing is recorded for this pair.
+  const GNAME = { f: "cewek", m: "cowok" };
+  async function fixGender(side) {
+    if (busy || !current) return;
+    const id = current[side + "_id"], other = current[side + "_gender"] === "f" ? "m" : "f";
+    if (!confirm(`Pindahkan orang ini ke ${GNAME[other]}? Dia akan dibandingkan dengan sesama ${GNAME[other]}.`)) return;
+    busy = true;
+    try {
+      const r = await api("/api/gender", { method: "POST", body: JSON.stringify({ id, gender: other }) });
+      if (!r.ok) throw new Error();
+      toast(`Dipindah ke ${GNAME[other]}`);
+      ahead = []; // queued pairs may still pair them with the old group
+      render(await take());
+    } catch (_) {
+      toast("Gagal memindahkan. Coba lagi.");
+    } finally { busy = false; }
+  }
+  document.querySelectorAll(".gfix").forEach((b) => (b.onclick = () => fixGender(b.dataset.side)));
+
+  // Bad data (not a face, someone else's photo, a document): take the person
+  // out of battles and scores. The scores page lists them, with Restore.
+  async function markNoise(side) {
+    if (busy || !current) return;
+    if (!confirm("Tandai foto orang ini bermasalah? Dia tidak akan muncul lagi di pilihan dan skor.")) return;
+    busy = true;
+    try {
+      const r = await api("/api/noise", { method: "POST", body: JSON.stringify({ id: current[side + "_id"], noise: true }) });
+      if (!r.ok) throw new Error();
+      toast("Ditandai bermasalah");
+      ahead = [];
+      render(await take());
+    } catch (_) {
+      toast("Gagal menandai. Coba lagi.");
+    } finally { busy = false; }
+  }
+  document.querySelectorAll(".noise").forEach((b) => (b.onclick = () => markNoise(b.dataset.side)));
 
   async function pick(side) {
     if (busy || !current) return;
