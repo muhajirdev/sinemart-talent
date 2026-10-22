@@ -402,6 +402,18 @@ async function outsideCheck(env: Env) {
   return out;
 }
 
+// Every battle one person was in, newest first: who they faced, how it went
+// and who judged it (skips included, so a much-skipped face stands out).
+async function battleHistory(env: Env, id: number) {
+  const { results } = await env.DB.prepare(
+    `SELECT CASE WHEN left_id = ?1 THEN right_id ELSE left_id END AS other,
+       CASE WHEN winner_id = ?1 THEN 'won' WHEN winner_id IS NOT NULL THEN 'lost' WHEN tie = 1 THEN 'tie' ELSE 'skip' END AS result,
+       rater, kind = 'repeat' AS repeat, created_at
+     FROM picks WHERE left_id = ?1 OR right_id = ?1 ORDER BY id DESC LIMIT 200`,
+  ).bind(id).all();
+  return results;
+}
+
 async function exportPicks(env: Env) {
   // For the trainer: one line per decided pick (skips dropped).
   const { results } = await env.DB.prepare(
@@ -429,6 +441,8 @@ export default {
     const only = url.searchParams.get("rater"); // results/map for one rater's taste
 
     if (url.pathname === "/api/geometry") return json(await geometryPercentiles(env));
+    const bh = url.pathname.match(/^\/api\/battles\/(\d+)$/);
+    if (bh) return json(await battleHistory(env, Number(bh[1])));
     const fp = url.pathname.match(/^\/api\/points\/(\d+)$/);
     if (fp) return json(await facePoints(env, Number(fp[1])));
     if (url.pathname === "/api/me") {

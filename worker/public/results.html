@@ -73,7 +73,15 @@
   th { color: var(--muted); font-weight: 500; font-size: 13px; }
   .scroll { overflow-x: auto; }
   .lb { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.97); display: flex; flex-direction: column;
-    align-items: center; justify-content: center; padding: 16px; touch-action: pan-y; }
+    align-items: center; justify-content: safe center; padding: 16px; touch-action: pan-y; overflow-y: auto; }
+  .lb .hist { width: min(92vw, 640px); margin-top: 14px; color: #ddd; font-size: 13px; }
+  .lb .hist h3 { font-size: 14px; margin: 0 0 6px; }
+  .lb .hist ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .lb .hist li { display: flex; align-items: center; gap: 8px; }
+  .lb .hist li.skip { opacity: .5; }
+  .lb .hist .label { color: #999; }
+  .lb .hist img { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; cursor: pointer; }
+  .lb .hist b.won { color: #7bd88f; } .lb .hist b.lost { color: #ff8a80; }
   .lb[hidden] { display: none; }
   .lb .stage { position: relative; width: min(92vw, 640px); height: min(70vh, 720px); display: flex; align-items: center; justify-content: center; }
   .lb .stage img { width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
@@ -140,6 +148,7 @@
   <div class="dots" id="lbDots"></div>
   <div class="cap" id="lbCap"></div>
   <div class="phiBox"><button id="lbPhiBtn" aria-pressed="false">Show golden ratio</button><div id="lbPhiList"></div></div>
+  <div class="hist" id="lbHist"></div>
 </div>
 <script src="/phi.js"></script>
 <script>
@@ -351,6 +360,28 @@
     for (let k = 0; k < lb.n; k++) new Image().src = boxUrl(k);
     $("lb").hidden = false;
     showBox();
+    loadHistory(id);
+  }
+
+  // Battle history: every pick this person was in, newest first. Tap an
+  // opponent to open them.
+  async function loadHistory(id) {
+    $("lbHist").innerHTML = "";
+    const r = await api(`/api/battles/${id}`);
+    if (!r.ok || lb.id !== id) return;
+    const rows = await r.json();
+    const word = { won: "Won", lost: "Lost", tie: "Sama saja", skip: "Skipped" };
+    const decided = rows.filter((b) => b.result !== "skip").length;
+    $("lbHist").innerHTML = `<h3>Battle history · ${decided} decided, ${rows.length - decided} skipped</h3>` + (rows.length
+      ? `<ol>${rows.map((b) => `<li class="${b.result}"><b class="${b.result}">${word[b.result]}</b> vs
+          <img src="/img/${b.other}?t=${encodeURIComponent(token)}" alt="#${b.other}" loading="lazy" data-id="${b.other}">
+          <span>#${b.other} · ${esc(b.rater)}${b.repeat ? " · repeat" : ""}
+          <span class="label">· ${new Date(b.created_at.replace(" ", "T") + "Z").toLocaleString()}</span></span></li>`).join("")}</ol>`
+      : `<p class="label">No battles yet.</p>`);
+    $("lbHist").querySelectorAll("img").forEach((im) => (im.onclick = () => {
+      const other = Number(im.dataset.id);
+      if (state.d.faces.some((f) => f.id === other)) openBox(other);
+    }));
   }
   const boxUrl = (k) => `/img/${lb.id}${k ? "/" + (k - 1) : ""}?t=${encodeURIComponent(token)}`;
   function showBox() {
