@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow, noimageindex">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#202020">
+<title>Sinemart Shortlist</title>
+<style>
+  :root { --bg: #202020; --card: #2b2b2b; --fg: #f2f2f2; --muted: #9a9a9a; --accent: #f5c242; --good: #7bd88f; --bad: #ff8a80; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom)); max-width: 1100px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 12px 0 4px; flex-wrap: wrap; }
+  h1 { font-size: 17px; margin: 0; }
+  a { color: var(--accent); text-decoration: none; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  .chips button { background: var(--card); color: var(--fg); border: 1px solid #444; border-radius: 999px; padding: 6px 14px; font-size: 14px; }
+  .chips button[aria-pressed="true"] { background: var(--fg); color: #111; border-color: var(--fg); }
+  #msg { color: var(--muted); padding: 30px 0; text-align: center; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-top: 12px; }
+  .card { background: var(--card); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .ph { position: relative; aspect-ratio: 1; background: #808080; }
+  .ph img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; -webkit-user-drag: none; }
+  .ph .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; border-radius: 50%;
+    border: 0; background: #000a; color: #fff; font-size: 18px; }
+  .ph .prev { left: 6px; } .ph .next { right: 6px; }
+  .ph .tag { position: absolute; left: 8px; top: 8px; background: #000b; border-radius: 999px; padding: 2px 10px; font-size: 13px; font-weight: 600; }
+  .ph .badge { position: absolute; right: 8px; top: 8px; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
+  .badge.sure { background: var(--good); color: #111; } .badge.unsure { background: #000b; color: var(--muted); }
+  .ph .cnt { position: absolute; left: 8px; bottom: 8px; background: #000b; border-radius: 999px; padding: 1px 8px; font-size: 12px; }
+  .row { display: flex; gap: 8px; padding: 10px; }
+  .row button { flex: 1; border-radius: 10px; padding: 9px 0; font-weight: 600; font-size: 14px; border: 1px solid #555; background: transparent; color: var(--fg); }
+  .row button.call[aria-pressed="true"] { background: var(--accent); color: #111; border-color: var(--accent); }
+  .row button.skip[aria-pressed="true"] { background: var(--bad); color: #111; border-color: var(--bad); }
+  .by { color: var(--muted); font-size: 12px; padding: 0 10px 10px; min-height: 14px; }
+  .check { background: var(--card); border-radius: 12px; padding: 12px 14px; margin: 10px 0; font-size: 14px; }
+  .check[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Shortlist</h1>
+  <div><a href="/">← Pilih wajah</a> · <a href="/results.html">Lab</a></div>
+</header>
+<p class="sub">Urutan dari pilihan tim. <b>Yakin</b> = posisinya sudah stabil; <b>ragu</b> = masih bisa naik/turun, butuh lebih banyak pilihan.</p>
+<div class="chips" id="gsw"><button data-v="f" aria-pressed="true">Cewek</button><button data-v="m" aria-pressed="false">Cowok</button></div>
+<div class="chips" id="ssw"><button data-v="all" aria-pressed="true">Semua</button><button data-v="2021" aria-pressed="false">2021</button><button data-v="2026" aria-pressed="false">2026</button></div>
+<div class="chips" id="dsw"><button data-v="open" aria-pressed="true">Belum diputuskan</button><button data-v="call" aria-pressed="false">Panggil</button><button data-v="skip" aria-pressed="false">Skip</button><button data-v="all" aria-pressed="false">Semua</button></div>
+<div class="check" id="check" hidden></div>
+<div id="msg">Memuat…</div>
+<div id="grid"></div>
+<script>
+(() => {
+  let token = null;
+  try { token = new URLSearchParams(location.search).get("t") || localStorage.getItem("rater");
+    if (token) localStorage.setItem("rater", token); } catch (_) {}
+  const $ = (id) => document.getElementById(id);
+  if (!token) { $("msg").innerHTML = '<a href="/">Masuk dulu di halaman pilih</a>.'; return; }
+  const api = (path, opts = {}) => fetch(path, { ...opts, headers: { "x-rater-token": token, "content-type": "application/json" } });
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const state = { g: "f", season: "all", status: "open" };
+  try { Object.assign(state, JSON.parse(localStorage.getItem("shortlist") || "{}")); } catch (_) {}
+  const img = (id, k) => `/img/${id}${k ? "/" + (k - 1) : ""}?t=${encodeURIComponent(token)}`;
+
+  function chips(el, key) {
+    el.querySelectorAll("button").forEach((b) => {
+      b.setAttribute("aria-pressed", String(b.dataset.v === state[key]));
+      b.onclick = () => { state[key] = b.dataset.v; try { localStorage.setItem("shortlist", JSON.stringify(state)); } catch (_) {} load(); };
+    });
+  }
+
+  async function load() {
+    chips($("gsw"), "g"); chips($("ssw"), "season"); chips($("dsw"), "status");
+    $("msg").hidden = false; $("msg").textContent = "Memuat…";
+    const r = await api(`/api/shortlist?g=${state.g}&season=${state.season}&status=${state.status}&n=60`);
+    if (!r.ok) { $("msg").textContent = r.status === 401 ? "Masuk dulu di halaman pilih." : "Gagal memuat."; $("grid").innerHTML = ""; return; }
+    const d = await r.json();
+    $("msg").hidden = d.faces.length > 0;
+    $("msg").textContent = d.total ? "Tidak ada yang cocok dengan filter ini." : "Belum ada skor. Buat beberapa pilihan dulu.";
+    $("dsw").querySelector('[data-v="call"]').textContent = `Panggil (${d.counts.call})`;
+    $("dsw").querySelector('[data-v="skip"]').textContent = `Skip (${d.counts.skip})`;
+    $("grid").innerHTML = d.faces.map((f) => `
+      <div class="card" data-id="${f.id}" data-n="${f.n_photos + 1}" data-v="0">
+        <div class="ph">
+          <img src="${img(f.id, 0)}" alt="Peserta ${f.id}" loading="lazy">
+          <span class="tag">#${f.rank} · ${f.season}</span>
+          <span class="badge ${f.sure ? "sure" : "unsure"}">${f.sure ? "yakin" : "ragu"}</span>
+          ${f.n_photos ? `<button class="nav prev" aria-label="Foto sebelumnya">‹</button><button class="nav next" aria-label="Foto berikutnya">›</button>
+          <span class="cnt">1/${f.n_photos + 1}</span>` : ""}
+        </div>
+        <div class="row">
+          <button class="call" aria-pressed="${f.status === "call"}">Panggil</button>
+          <button class="skip" aria-pressed="${f.status === "skip"}">Skip</button>
+        </div>
+        <div class="by">${f.decided_by ? `oleh ${esc(f.decided_by)}` : ""}</div>
+      </div>`).join("");
+    $("grid").querySelectorAll(".card").forEach(wire);
+  }
+
+  function wire(card) {
+    const id = Number(card.dataset.id), n = Number(card.dataset.n);
+    const flip = (step) => {
+      const v = (Number(card.dataset.v) + step + n) % n;
+      card.dataset.v = v;
+      card.querySelector("img").src = img(id, v);
+      card.querySelector(".cnt").textContent = `${v + 1}/${n}`;
+    };
+    card.querySelector(".prev")?.addEventListener("click", () => flip(-1));
+    card.querySelector(".next")?.addEventListener("click", () => flip(1));
+    for (const kind of ["call", "skip"]) {
+      const b = card.querySelector("." + kind);
+      b.onclick = async () => {
+        const on = b.getAttribute("aria-pressed") !== "true";
+        const r = await api("/api/decide", { method: "POST", body: JSON.stringify({ id, status: on ? kind : null }) });
+        if (!r.ok) return;
+        card.querySelectorAll(".row button").forEach((x) => x.setAttribute("aria-pressed", "false"));
+        b.setAttribute("aria-pressed", String(on));
+        card.querySelector(".by").textContent = on ? "oleh kamu" : "";
+      };
+    }
+  }
+
+  // Does the ranking agree with the team's own 2026 screening? Totals only.
+  api("/api/check").then((r) => r.json()).then((rows) => {
+    const c = rows.find((x) => x.source === "sortir2026");
+    if (!c || c.auc == null) return;
+    $("check").hidden = false;
+    $("check").innerHTML = `<b>Cek dengan seleksi 2026:</b> dari ${c.passed} peserta 2026 yang lolos sortir, ${c.passed_in_top50} masuk 50 besar
+      (kalau acak ≈ ${Math.round(c.expected_in_top50)}). Peluang yang lolos diurutkan di atas yang tidak lolos: <b>${Math.round(c.auc * 100)}%</b> (acak = 50%).`;
+  }).catch(() => {});
+
+  load();
+})();
+</script>
+</body>
+</html>
