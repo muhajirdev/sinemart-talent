@@ -156,7 +156,6 @@ async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionCont
     stmts.push(env.DB.prepare("UPDATE pair_queue SET done_at = datetime('now') WHERE id = ?1").bind(queue_id));
   }
   await env.DB.batch(stmts);
-  if (winner_id !== null || tie) ctx.waitUntil(maybeRetrain(env));
   return json({ ok: true });
 }
 
@@ -177,9 +176,22 @@ async function undoPick(env: Env, who: Rater) {
   return json({ ...pair, was_pick: last.winner_id !== null || last.tie === 1 });
 }
 
+// A change that isn't a pick (a gender fix, a restored person): make the next
+// cron run retrain, by marking the model as trained on no picks.
+async function retrainSoon(env: Env) {
+  await env.DB.prepare("UPDATE model SET n_picks = 0 WHERE id = 1").run();
+}
+
+// Runs from the every-minute cron, not after each pick: with 840 people and
+// eight models a retrain outlasts the ~30 s a request may keep working after
+// its response, so it was cut off and the scores froze. Counts picks the way
+// retrain does (no repeats, same group, both people scored and not marked
+// bad), so n_picks and this count can actually meet.
 async function maybeRetrain(env: Env) {
   const row = await env.DB.prepare(
-    `SELECT (SELECT COUNT(*) FROM picks WHERE ${ANSWERED}) AS picks,
+    `SELECT (SELECT COUNT(*) FROM picks p JOIN applicants a ON a.id = p.left_id JOIN applicants b ON b.id = p.right_id
+             WHERE (p.winner_id IS NOT NULL OR p.tie = 1) AND p.kind != 'repeat' AND a.gender IS b.gender
+               AND a.z IS NOT NULL AND b.z IS NOT NULL AND a.noise IS NULL AND b.noise IS NULL) AS picks,
             (SELECT n_picks FROM model WHERE id = 1) AS trained`,
   ).first<{ picks: number; trained: number | null }>();
   if (row && row.trained !== null && row.picks - row.trained >= RETRAIN_EVERY) await retrain(env);
@@ -348,7 +360,7 @@ async function setGender(req: Request, env: Env, ctx: ExecutionContext) {
   const r = await env.DB.prepare("UPDATE applicants SET gender = ?1, gender_src = 'manual' WHERE id = ?2").bind(gender, id).run();
   if (!r.meta.changes) return json({ error: "unknown applicant" }, 404);
   await env.DB.prepare("DELETE FROM rater_models").run();
-  ctx.waitUntil(retrain(env));
+  await retrainSoon(env);
   return json({ ok: true });
 }
 
@@ -361,7 +373,7 @@ async function setNoise(req: Request, env: Env, who: Rater, ctx: ExecutionContex
   if (!r.meta.changes) return json({ error: "unknown applicant" }, 404);
   if (noise) {
     await env.DB.prepare("DELETE FROM pair_queue WHERE done_at IS NULL AND (left_id = ?1 OR right_id = ?1)").bind(id).run();
-  } else ctx.waitUntil(retrain(env));
+  } else await retrainSoon(env);
   return json({ ok: true });
 }
 
@@ -498,5 +510,8 @@ export default {
       });
     }
     return json({ error: "not found" }, 404);
+  },
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(maybeRetrain(env));
   },
 } satisfies ExportedHandler<Env>;

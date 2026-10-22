@@ -23,3 +23,8 @@ bucket_name = "sinemart-talent"
 # picks, which takes seconds of CPU. Allow up to 5 minutes (paid plan).
 [limits]
 cpu_ms = 300000
+
+# Retrain runs here (every minute, only when 10+ new picks are in), not after
+# each pick: a cron run may take minutes, a request's leftover time can't.
+[triggers]
+crons = ["* * * * *"]
