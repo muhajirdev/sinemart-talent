@@ -129,6 +129,7 @@
 </section>
 <section id="agree" class="card" hidden></section>
 <section id="contrast" class="card contrast" hidden></section>
+<section id="noise" class="card" hidden></section>
 <h2 id="boardTitle" hidden>Leaderboard</h2>
 <div class="chips" id="chips"></div>
 <ol id="faces"></ol>
@@ -572,6 +573,26 @@
     $("map").hidden = true;
     renderMap();
     if (ar.ok) renderAgree(await ar.json());
+    renderNoise();
+  }
+
+  // People whose photos a rater marked "Foto bermasalah": out of battles and
+  // scores until someone restores them.
+  async function renderNoise() {
+    const r = await api("/api/noise");
+    const list = r.ok ? (await r.json()).filter((n) => n.gender === state.gender) : [];
+    $("noise").hidden = !list.length;
+    if (!list.length) return;
+    $("noise").innerHTML = `<details><summary><h2 style="display:inline">Marked as bad photos (${list.length})</h2></summary>
+      <p class="note">Left out of battles and scores. Restore puts them back.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:10px">${list.map((n) => `<div style="text-align:center">
+        <img src="/img/${n.id}?t=${encodeURIComponent(token)}" alt="#${n.id}" style="width:96px;height:96px;object-fit:cover;border-radius:8px;display:block">
+        <span class="meta">#${n.id} · by ${esc(n.by)}</span><br><button data-id="${n.id}">Restore</button></div>`).join("")}</div></details>`;
+    $("noise").querySelectorAll("button").forEach((b) => (b.onclick = async () => {
+      b.disabled = true;
+      await api("/api/noise", { method: "POST", body: JSON.stringify({ id: Number(b.dataset.id), noise: false }) });
+      renderNoise();
+    }));
   }
   // Which model ranks the page: Model 1 or Model 2+ (another embedding),
   // and its shape: a straight line (what battles use), many clusters, or one

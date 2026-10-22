@@ -53,7 +53,12 @@ async function withPhotos(env: Env, pair: { queue_id: number | null; left_id: nu
   ).bind(pair.left_id, pair.right_id).all<{ id: number; kind: string }>();
   const kinds = (id: number) => results.filter((r) => r.id === id).map((r) => r.kind);
   const [lp, rp] = await Promise.all([facePoints(env, pair.left_id), facePoints(env, pair.right_id)]);
-  return { ...pair, left_photos: kinds(pair.left_id), right_photos: kinds(pair.right_id), left_points: lp, right_points: rp };
+  const g = new Map((await env.DB.prepare("SELECT id, gender FROM applicants WHERE id IN (?1, ?2)")
+    .bind(pair.left_id, pair.right_id).all<{ id: number; gender: string | null }>()).results.map((r) => [r.id, r.gender]));
+  return {
+    ...pair, left_photos: kinds(pair.left_id), right_photos: kinds(pair.right_id), left_points: lp, right_points: rp,
+    left_gender: g.get(pair.left_id) ?? null, right_gender: g.get(pair.right_id) ?? null,
+  };
 }
 
 // Face points on a person's main face crop (what /img/<id> shows), or null.
@@ -107,10 +112,10 @@ async function nextPair(env: Env, who: Rater) {
 
   // Queue empty (cold start, or the trainer hasn't refilled it): random pair.
   // Same group only: cewek vs cewek, cowok vs cowok.
-  const a = await env.DB.prepare("SELECT id, gender FROM applicants ORDER BY RANDOM() LIMIT 1").first<{ id: number; gender: string | null }>();
+  const a = await env.DB.prepare("SELECT id, gender FROM applicants WHERE noise IS NULL ORDER BY RANDOM() LIMIT 1").first<{ id: number; gender: string | null }>();
   if (!a) return null;
   const b = await env.DB.prepare(
-    "SELECT id FROM applicants WHERE id != ?1 AND gender IS ?2 ORDER BY RANDOM() LIMIT 1",
+    "SELECT id FROM applicants WHERE id != ?1 AND gender IS ?2 AND noise IS NULL ORDER BY RANDOM() LIMIT 1",
   ).bind(a.id, a.gender).first<{ id: number }>();
   if (!b) return null;
   return { queue_id: null, left_id: a.id, right_id: b.id };
@@ -232,7 +237,7 @@ async function results(env: Env, who: string | null, mode: string | null = null)
        (SELECT COUNT(*) FROM picks p WHERE (p.winner_id IS NOT NULL OR p.tie = 1) AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
        (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos,
        g.phi_dev, g.pallett_dev, g.asymmetry, g.atypicality
-     FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id ORDER BY a.score DESC NULLS LAST, a.id`,
+     FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id WHERE a.noise IS NULL ORDER BY a.score DESC NULLS LAST, a.id`,
   ).all<Record<string, unknown>>();
   let peakGender: (string | null)[] | null = null;
   if (mode && mode !== "one" && mode !== "hills" && mode !== "line") {
@@ -347,13 +352,26 @@ async function setGender(req: Request, env: Env, ctx: ExecutionContext) {
   return json({ ok: true });
 }
 
+// Mark a person's photos as bad data (or restore them). Marked people drop
+// out of battles, training and the leaderboard; their picks stay stored.
+async function setNoise(req: Request, env: Env, who: Rater, ctx: ExecutionContext) {
+  const { id, noise } = (await req.json().catch(() => ({}))) as { id?: number; noise?: boolean };
+  if (!Number.isInteger(id) || typeof noise !== "boolean") return json({ error: "id and noise true|false" }, 400);
+  const r = await env.DB.prepare("UPDATE applicants SET noise = ?1 WHERE id = ?2").bind(noise ? who.name : null, id).run();
+  if (!r.meta.changes) return json({ error: "unknown applicant" }, 404);
+  if (noise) {
+    await env.DB.prepare("DELETE FROM pair_queue WHERE done_at IS NULL AND (left_id = ?1 OR right_id = ?1)").bind(id).run();
+  } else ctx.waitUntil(retrain(env));
+  return json({ ok: true });
+}
+
 // How the ranking compares with an outside human screening, in aggregate
 // only: the chance a passed person outranks a not-passed one of the same
 // group (0.5 = no better than chance), and how many passed land in the top 50.
 async function outsideCheck(env: Env) {
   const { results } = await env.DB.prepare(
     `SELECT l.source, l.label, a.gender, a.score FROM outside_labels l JOIN applicants a ON a.id = l.applicant_id
-     WHERE a.score IS NOT NULL`,
+     WHERE a.score IS NOT NULL AND a.noise IS NULL`,
   ).all<{ source: string; label: number; gender: string; score: number }>();
   const out = [];
   for (const source of [...new Set(results.map((r) => r.source))]) {
@@ -441,6 +459,10 @@ export default {
       return json(await territory(env, { params: r.params, faces: new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }])) }, gender));
     }
     if (url.pathname === "/api/gender" && req.method === "POST") return setGender(req, env, ctx);
+    if (url.pathname === "/api/noise" && req.method === "POST") return setNoise(req, env, who, ctx);
+    if (url.pathname === "/api/noise" && req.method === "GET") {
+      return json((await env.DB.prepare("SELECT id, gender, noise AS by FROM applicants WHERE noise IS NOT NULL ORDER BY id").all()).results);
+    }
     if (url.pathname === "/api/check" && req.method === "GET") return json(await outsideCheck(env));
     if (url.pathname === "/api/raters" && req.method === "GET") return json(await raterAgreement(env));
     if (url.pathname === "/api/retrain" && req.method === "POST") return json(await retrain(env));

@@ -36,3 +36,6 @@ ALTER TABLE face_points ADD COLUMN front TEXT;
 ALTER TABLE model ADD COLUMN params_line TEXT;
 ALTER TABLE alt_models ADD COLUMN params_line TEXT;
 ALTER TABLE alt_models ADD COLUMN heldout_line REAL;
+
+-- 2026-10-22: raters can mark a person's photos as bad data ("Foto bermasalah").
+ALTER TABLE applicants ADD COLUMN noise TEXT;

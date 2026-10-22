@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS applicants (
   model      TEXT,                         -- which model wrote the score
   gender     TEXT,                         -- 'f' cewek | 'm' cowok: groups battles and hills, never the score
   gender_src TEXT,                         -- 'auto' (zero-shot guess) | 'manual' (fixed on the scores page)
+  noise      TEXT,                         -- bad photos (not a face, someone else): who marked it; NULL = fine
   updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS applicants_score ON applicants (score DESC);
