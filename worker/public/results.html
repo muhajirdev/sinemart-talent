@@ -575,7 +575,10 @@
     const mq = !state.rater && state.mode !== "line" ? `${q ? "&" : "?"}mode=${encodeURIComponent(state.mode)}` : "";
     const g = `${q || mq ? "&" : "?"}gender=${state.gender}`;
     $("msw").hidden = $("csw").hidden = !!state.rater;
-    const [r, mr, ar] = await Promise.all([api("/api/results" + q + mq), api("/api/map" + q + mq + g), api("/api/raters")]);
+    // The scores come first; the agreement table and the map (hundreds of face
+    // images, inside a closed section) must not hold them up.
+    const ar = api("/api/raters");
+    const r = await api("/api/results" + q + mq);
     if (r.status === 401) { $("msg").innerHTML = '<a href="/">Sign in on the picking page first</a>.'; return; }
     const data = await r.json();
     state.pg = data.model?.peak_gender || [];
@@ -585,11 +588,22 @@
     $("gsw").hidden = !grouped;
     if (grouped) data.faces = data.faces.filter((f) => f.gender === state.gender);
     render(data);
-    state.map = mr.ok ? await mr.json() : null;
-    $("map").hidden = true;
-    renderMap();
-    if (ar.ok) renderAgree(await ar.json());
+    state.map = null;
+    state.mapUrl = "/api/map" + q + mq + g;
+    $("map").hidden = !data.model?.trained_at;
+    if ($("mapd").open) loadMap();
     renderNoise();
+    const a = await ar;
+    if (a.ok) renderAgree(await a.json());
+  }
+
+  // The map loads only once it's opened.
+  async function loadMap() {
+    if (state.map) return;
+    const url = state.mapUrl, mr = await api(url);
+    if (url !== state.mapUrl || !mr.ok) return; // the view changed meanwhile
+    state.map = await mr.json();
+    renderMap();
   }
 
   // People whose photos a rater marked "Foto bermasalah": out of battles and
@@ -637,6 +651,7 @@
     $("gsw").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
     load();
   }));
+  $("mapd").addEventListener("toggle", () => { if ($("mapd").open) loadMap(); });
   $("who").onchange = () => { state.rater = $("who").value; state.filter = "all"; load(); };
   $("gsw").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.g === state.gender)));
   load();
