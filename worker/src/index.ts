@@ -128,10 +128,12 @@ async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionCont
     right_id: number;
     winner_id: number | null;
     tie?: boolean; // "Sama saja": both about equal
+    neither?: boolean; // "Keduanya kurang menarik": both are a clear no
     ms?: number;
   };
   const { queue_id, left_id, right_id, winner_id } = body;
-  const tie = body.tie === true && winner_id === null ? 1 : 0;
+  const neither = body.neither === true && winner_id === null ? 1 : 0;
+  const tie = body.tie === true && winner_id === null && !neither ? 1 : 0;
   if (!Number.isInteger(left_id) || !Number.isInteger(right_id) || left_id === right_id) {
     return json({ error: "bad pair" }, 400);
   }
@@ -149,8 +151,8 @@ async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionCont
   const ms = Number.isFinite(body.ms) ? Math.round(body.ms!) : null;
   const stmts = [
     env.DB.prepare(
-      "INSERT INTO picks (rater, left_id, right_id, winner_id, tie, kind, ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-    ).bind(who.name, left_id, right_id, winner_id, tie, kind, ms),
+      "INSERT INTO picks (rater, left_id, right_id, winner_id, tie, kind, ms, neither) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    ).bind(who.name, left_id, right_id, winner_id, tie, kind, ms, neither),
   ];
   if (queue_id !== null) {
     stmts.push(env.DB.prepare("UPDATE pair_queue SET done_at = datetime('now') WHERE id = ?1").bind(queue_id));
@@ -163,9 +165,11 @@ async function recordPick(req: Request, env: Env, who: Rater, ctx: ExecutionCont
 // same pair again. Skips can be taken back too.
 async function undoPick(env: Env, who: Rater) {
   const last = await env.DB.prepare(
-    `SELECT id, left_id, right_id, winner_id, tie, kind FROM picks
+    `SELECT id, left_id, right_id, winner_id, tie, neither, kind FROM picks
      WHERE rater = ?1 AND created_at > datetime('now', '-30 minutes') ORDER BY id DESC LIMIT 1`,
-  ).bind(who.name).first<{ id: number; left_id: number; right_id: number; winner_id: number | null; tie: number; kind: string }>();
+  ).bind(who.name).first<{
+    id: number; left_id: number; right_id: number; winner_id: number | null; tie: number; neither: number; kind: string;
+  }>();
   if (!last) return json({ error: "nothing to undo" }, 404);
   await env.DB.prepare("DELETE FROM picks WHERE id = ?1").bind(last.id).run();
   // A repeat stays a repeat, so the new answer doesn't count twice in training.
@@ -173,7 +177,7 @@ async function undoPick(env: Env, who: Rater) {
     ? await queueRepeat(env, who, last.left_id, last.right_id)
     : { queue_id: null, left_id: last.left_id, right_id: last.right_id };
   const pair = await withPhotos(env, again);
-  return json({ ...pair, was_pick: last.winner_id !== null || last.tie === 1 });
+  return json({ ...pair, was_pick: last.winner_id !== null || last.tie === 1 || last.neither === 1 });
 }
 
 // A change that isn't a pick (a gender fix, a restored person): make the next
@@ -190,7 +194,7 @@ async function retrainSoon(env: Env) {
 async function maybeRetrain(env: Env) {
   const row = await env.DB.prepare(
     `SELECT (SELECT COUNT(*) FROM picks p JOIN applicants a ON a.id = p.left_id JOIN applicants b ON b.id = p.right_id
-             WHERE (p.winner_id IS NOT NULL OR p.tie = 1) AND p.kind != 'repeat' AND a.gender IS b.gender
+             WHERE (p.winner_id IS NOT NULL OR p.tie = 1 OR p.neither = 1) AND p.kind != 'repeat' AND a.gender IS b.gender
                AND a.z IS NOT NULL AND b.z IS NOT NULL AND a.noise IS NULL AND b.noise IS NULL) AS picks,
             (SELECT n_picks FROM model WHERE id = 1) AS trained`,
   ).first<{ picks: number; trained: number | null }>();
@@ -240,13 +244,13 @@ async function results(env: Env, who: string | null, mode: string | null = null)
        EXISTS (SELECT 1 FROM alt_z z WHERE z.key = m.key) AS has_z, n_picks FROM alt_models m ORDER BY key`).all()).results;
   if (model) { delete model.params_one; delete model.params; }
   const picks = await env.DB.prepare(
-    `SELECT COUNT(*) AS decided, SUM(tie) AS ties, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters
+    `SELECT COUNT(*) AS decided, SUM(tie) AS ties, SUM(neither) AS neithers, (SELECT COUNT(*) FROM picks) AS total, COUNT(DISTINCT rater) AS raters
      FROM picks WHERE ${ANSWERED}`,
   ).first<{ decided: number; total: number; raters: number }>();
   const { results: faces } = await env.DB.prepare(
     `SELECT a.id, a.score, a.score_std, a.look, a.gender, a.gender_src,
        (SELECT COUNT(*) FROM picks p WHERE p.winner_id = a.id) AS wins,
-       (SELECT COUNT(*) FROM picks p WHERE (p.winner_id IS NOT NULL OR p.tie = 1) AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
+       (SELECT COUNT(*) FROM picks p WHERE (p.winner_id IS NOT NULL OR p.tie = 1 OR p.neither = 1) AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
        (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos,
        g.phi_dev, g.pallett_dev, g.asymmetry, g.atypicality
      FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id WHERE a.noise IS NULL ORDER BY a.score DESC NULLS LAST, a.id`,
@@ -407,7 +411,7 @@ async function outsideCheck(env: Env) {
 async function battleHistory(env: Env, id: number) {
   const { results } = await env.DB.prepare(
     `SELECT CASE WHEN left_id = ?1 THEN right_id ELSE left_id END AS other,
-       CASE WHEN winner_id = ?1 THEN 'won' WHEN winner_id IS NOT NULL THEN 'lost' WHEN tie = 1 THEN 'tie' ELSE 'skip' END AS result,
+       CASE WHEN winner_id = ?1 THEN 'won' WHEN winner_id IS NOT NULL THEN 'lost' WHEN tie = 1 THEN 'tie' WHEN neither = 1 THEN 'neither' ELSE 'skip' END AS result,
        rater, kind = 'repeat' AS repeat, created_at
      FROM picks WHERE left_id = ?1 OR right_id = ?1 ORDER BY id DESC LIMIT 200`,
   ).bind(id).all();

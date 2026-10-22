@@ -144,27 +144,46 @@ export class Hills {
   }
 }
 
+// "Keduanya kurang menarik" (neither): face i of group g fell below that group's
+// "no" line tau[g], a learned score under which a face is a clear no. So a
+// neither answer is both faces losing to a virtual opponent sitting on the
+// line: P = sigmoid(tau[g] - score(i)).
+export type Below = { i: number; g: number };
+const TAU_PULL = 0.1;
+
 export class Arrow {
   w: Float64Array;
-  constructor(r: number) {
+  tau: Float64Array;
+  constructor(r: number, nGroups = 0) {
     this.w = new Float64Array(r);
+    this.tau = new Float64Array(nGroups);
   }
   score(z: number[]) {
     let s = 0;
     for (let i = 0; i < z.length; i++) s += this.w[i] * z[i];
     return s;
   }
-  fit(Z: number[][], picks: Pick[], steps = 300, lr = 0.05, l2 = 1e-2) {
-    const opt = new Adam(this.w.length, lr);
-    const n = Math.max(picks.length, 1);
+  fit(Z: number[][], picks: Pick[], steps = 300, lr = 0.05, l2 = 1e-2, below: Below[] = []) {
+    const opt = new Adam(this.w.length, lr), optTau = new Adam(this.tau.length, lr);
+    const n = Math.max(picks.length + below.length, 1);
     for (let it = 0; it < steps; it++) {
-      const g = new Float64Array(this.w.length);
+      const g = new Float64Array(this.w.length), gt = new Float64Array(this.tau.length);
       for (const { w, l, y = 1 } of picks) {
         const c = -(y - sigmoid(this.score(Z[w]) - this.score(Z[l]))) / n;
         for (let i = 0; i < g.length; i++) g[i] += c * (Z[w][i] - Z[l][i]);
       }
+      for (const { i: f, g: k } of below) {
+        const c = sigmoid(this.score(Z[f]) - this.tau[k]) / n; // d/d score of -log P(below)
+        for (let i = 0; i < g.length; i++) g[i] += c * Z[f][i];
+        gt[k] -= c;
+      }
       for (let i = 0; i < g.length; i++) g[i] += l2 * this.w[i];
+      // Only faces below the line are ever labelled, so nothing would stop
+      // tau drifting up; a pull towards 0 (the average face, since taste
+      // space is centred) keeps "clear no" meaning "well below average".
+      for (let k = 0; k < gt.length; k++) gt[k] += TAU_PULL * this.tau[k];
       opt.step(this.w, g);
+      if (below.length) optTau.step(this.tau, gt);
     }
     return this;
   }
@@ -184,12 +203,13 @@ export function split(picks: Pick[], nFaces: number, rand: () => number) {
     const held = Array.from({ length: nFaces }, () => rand() < 0.2);
     return {
       by: "applicant" as const,
+      held,
       train: picks.filter((p) => !held[p.w] && !held[p.l]),
       test: picks.filter((p) => held[p.w] || held[p.l]),
     };
   }
   const isTest = picks.map(() => rand() < 0.2);
-  return { by: "pick" as const, train: picks.filter((_, i) => !isTest[i]), test: picks.filter((_, i) => isTest[i]) };
+  return { by: "pick" as const, held: null, train: picks.filter((_, i) => !isTest[i]), test: picks.filter((_, i) => isTest[i]) };
 }
 
 // Battles only within a group (cewek vs cewek, cowok vs cowok): each group
