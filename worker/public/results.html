@@ -63,6 +63,8 @@
   .contrast img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #808080; display: block; }
   .contrast figcaption { position: absolute; left: 4px; top: 4px; background: #000b; border-radius: 999px; padding: 0 6px; font-size: 11px; }
   .contrast .low img { outline: 2px solid #ff8a8066; }
+  #mapd summary { cursor: pointer; }
+  #mapd[open] summary { margin-bottom: 8px; }
   select { background: var(--card); color: var(--fg); border: 1px solid #555; border-radius: 10px; padding: 8px 10px; font-size: 15px; max-width: 100%; }
   .switch { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
   .switch label { color: var(--muted); font-size: 14px; }
@@ -116,13 +118,14 @@
 </div>
 <section id="model" class="card" hidden></section>
 <section id="map" class="card" hidden>
-  <h2>Territory map</h2>
+  <details id="mapd"><summary><h2 style="display:inline">Territory map</h2></summary>
   <div id="mapsvg"></div>
   <div id="tip" class="meta">Tap a face to see their photos. Drag to move, pinch or scroll to zoom, double-tap to zoom in.</div>
   <div class="legend" id="legend"></div>
   <p class="note">Brighter ground = closer to a cluster's peak. ▲ = a look's peak (its ideal face). Faces are ringed in
     the colour of their cluster. This is a flat slice of a higher-dimensional map, so distances are
     approximate; the scores below are exact.</p>
+  </details>
 </section>
 <section id="agree" class="card" hidden></section>
 <section id="contrast" class="card contrast" hidden></section>
