@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS pair_queue (
 );
 CREATE INDEX IF NOT EXISTS pair_queue_open ON pair_queue (done_at, served_at);
 
--- Every answer. winner_id NULL and tie 0 = skipped ("can't judge": bad photo,
+-- Every answer. winner_id NULL, tie 0 and neither 0 = skipped ("can't judge": bad photo,
 -- someone they know).
 CREATE TABLE IF NOT EXISTS picks (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS picks (
   right_id   INTEGER NOT NULL,
   winner_id  INTEGER,
   tie        INTEGER NOT NULL DEFAULT 0,   -- 1 = "Sama saja": both about equal (winner_id NULL)
+  neither    INTEGER NOT NULL DEFAULT 0,   -- 1 = "Keduanya tidak": both a clear no (winner_id NULL)
   kind       TEXT NOT NULL,                -- queue kind, or 'fallback'
   ms         INTEGER,                      -- time to answer
   created_at TEXT NOT NULL DEFAULT (datetime('now'))

@@ -39,3 +39,6 @@ ALTER TABLE alt_models ADD COLUMN heldout_line REAL;
 
 -- 2026-10-22: raters can mark a person's photos as bad data ("Foto bermasalah").
 ALTER TABLE applicants ADD COLUMN noise TEXT;
+
+-- 2026-10-22: "Keduanya tidak" (neither): both faces a clear no.
+ALTER TABLE picks ADD COLUMN neither INTEGER NOT NULL DEFAULT 0;
