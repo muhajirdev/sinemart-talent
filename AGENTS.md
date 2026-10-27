@@ -36,8 +36,9 @@ often writes Indonesian, so reply in the language he uses.
 
 - Branch from the default branch `main`, open a PR
   there, merge when tests pass.
-- Before pushing: `cd pipeline && python -m pytest -q` and
-  `cd worker && npx tsc --noEmit`.
+- Before pushing: `cd pipeline && python -m pytest -q`,
+  `cd worker && npx tsc --noEmit` and (if `scorer/` changed)
+  `cd scorer && npm run typecheck`.
 - Write code like the surrounding code: short plain-English comments that say
   *why*, dated when they record a decision ("2026-10-22: …").
 - Keep `worker/schema.sql` (fresh database) and `worker/migrate.sql` (dated

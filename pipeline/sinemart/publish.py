@@ -8,6 +8,8 @@ Writes:
                           plus a photos row per photo the raters can flip
                           through (D1)
     out/vectors.ndjson    full embeddings for `wrangler vectorize insert`
+    out/taste.json        the taste space itself (R2 models/m1/taste.json),
+                          so the scorer app can score a new photo
 
 The Worker trains the hills model live on the team's picks. It doesn't need
 the 768-dim embeddings for that: it works in a small "taste space" (the top
@@ -123,6 +125,11 @@ def main(argv: list[str]) -> None:
         init = json.dumps({"peaks": [rnd(p) for p in peaks], "peak_gender": peak_group, "model": str(data["model"])})
         sql.write(f"INSERT OR REPLACE INTO model (id, init) VALUES (1, '{init}');\n")
         sql.write("DELETE FROM rater_models;\n")  # a new taste space; personal models refit on demand
+    # 2026-10-27: keep the taste space itself, not only everyone's z.
+    from .project import rebuild, taste_json
+    mu, P, _ = rebuild(emb, z)
+    with open(out / "taste.json", "w") as f:
+        json.dump(taste_json(mu, P, str(data["model"])), f)
     n_photos = data["n_photos"][keep] if "n_photos" in data else np.ones(len(ids), int)
     print(f"{len(ids)} applicants ready ({(~keep).sum()} skipped by the quality gate), {len(peaks)} looks, "
           f"{int(n_photos.sum())} face crops averaged")

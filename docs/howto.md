@@ -11,6 +11,7 @@ and decisions are in [context.md](./context.md); how each step works is in
 - [Mark bad photos and duplicates](#mark-bad-photos-and-duplicates)
 - [Load new applicants](#load-new-applicants)
 - [Test the model on a batch outside the picks](#test-the-model-on-a-batch-outside-the-picks)
+- [Score a photo outside the app (scorer)](#score-a-photo-outside-the-app-scorer)
 - [Add a comparison model](#add-a-comparison-model)
 - [Golden ratio and face parts](#golden-ratio-and-face-parts)
 - [Change the schema](#change-the-schema)
@@ -234,6 +235,23 @@ model at load time; the Lab re-scores test batches with the current line on
 every load (other models need their `alt_z` rows). `sinemart.publish`
 keeps test rows but builds a new taste space, so after a re-publish their
 `z` is stale: re-run step 2 onwards.
+
+## Score a photo outside the app (scorer)
+
+`scorer/` is a separate app ("Nilai Foto", TanStack Start on Workers plus a
+Python container): upload 1–6 photos of one person, get Model 1 and Model 6
+scores, rank and percentile against the applicants, with today's weights.
+Nothing is stored. Details in [scorer/README.md](../scorer/README.md).
+
+- It needs each model's taste space in R2 `models/<key>/taste.json`.
+  `sinemart.publish` writes `out/taste.json` (Model 1) and `sinemart.alt`
+  writes `<out>.taste.json`; **upload them after every re-publish or
+  reload**, or the scorer projects into an old space.
+- For a taste space that wasn't saved at load time, rebuild it from the R2
+  crops: `python -m sinemart.project --taste live.npz live_z.json taste.json`
+  (must report max |dz| ≈ 0).
+- Deploying it is separate from the main Worker (`cd scorer && npm run
+  deploy`) and, like any deploy, needs Muajir's OK.
 
 ## Add a comparison model
 

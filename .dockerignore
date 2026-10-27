@@ -1,0 +1,6 @@
+# Docker build context for scorer/container (built from the repo root):
+# send only what the image copies.
+*
+!pipeline/sinemart
+!scorer/container/server.py
+**/__pycache__

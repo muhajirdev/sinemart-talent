@@ -1,0 +1,32 @@
+// Scorer: score a photo that isn't in the app, with the live models.
+// The page and /api/score run here (TanStack Start on Workers); the face
+// models run in the container (container/, Python). Same D1 and R2 as
+// worker/wrangler.toml: weights and applicants are read, never written,
+// and uploaded photos are never stored.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sinemart-scorer",
+  "account_id": "67f961331110b81774851ee4f54349b9",
+  "compatibility_date": "2026-10-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "src/server.ts",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "sinemart-talent", "database_id": "aaf71364-974f-4ce8-a59a-c4122b30d26c" }
+  ],
+  "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "sinemart-talent" }],
+  "containers": [
+    {
+      "class_name": "ScorerContainer",
+      "image": "./container/Dockerfile",
+      // Built from the repo root so the image can copy pipeline/sinemart.
+      "image_build_context": "..",
+      // Model 1 + Model 6 weights (~2 GB) need ~4 GB of memory; 2 vCPU keeps
+      // one photo to a few seconds.
+      "instance_type": { "vcpu": 2, "memory_mib": 6144, "disk_mb": 12000 },
+      "max_instances": 2
+    }
+  ],
+  "durable_objects": { "bindings": [{ "name": "SCORER", "class_name": "ScorerContainer" }] },
+  "exports": { "ScorerContainer": { "type": "durable-object", "storage": "sqlite" } }
+}

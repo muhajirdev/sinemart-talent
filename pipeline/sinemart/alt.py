@@ -2,6 +2,9 @@
 
     python -m sinemart.alt KEY EMB.npz gender.csv OUT.sql [FIXED.csv COLUMN]
 
+Also writes OUT.taste.json next to OUT.sql (upload to R2
+``models/<KEY>/taste.json`` for the scorer app).
+
 KEY names the model in the app (e.g. "m2"). The live app trains it on the same
 picks as the main model and the scores page can switch to it; battles keep
 using the main model. Applicants must already be loaded by sinemart.publish.
@@ -48,6 +51,11 @@ def main(argv: list[str]) -> None:
         sql.write(
             f"INSERT OR REPLACE INTO alt_models (key, init, fixed, n_picks) VALUES ('{key}', '{init}', {fx}, 0);\n"
         )
+    # 2026-10-27: keep the taste space itself, not only everyone's z.
+    from .project import rebuild, taste_json
+    mu, P, _ = rebuild(emb, z)
+    with open(out.rsplit(".", 1)[0] + ".taste.json", "w") as f:
+        json.dump(taste_json(mu, P, str(data["model"]) if "model" in data else key), f)
     print(f"{len(ids)} applicants in {key} ({filled} filled with their group average), {len(peaks)} looks")
 
 

@@ -17,3 +17,18 @@ def test_rebuild_matches_publish_and_keeps_new_people_apart():
     # A new face lands where the live space puts it; nobody else moves.
     new = rng.normal(size=(5, 40))
     assert ((new - mu) @ P.T).shape == (5, z_live.shape[1])
+
+
+def test_taste_json_reproduces_z():
+    # What the scorer app reads from R2: (embedding - mu) @ P.T must give back z.
+    import json
+
+    from sinemart.project import taste_json
+
+    rng = np.random.default_rng(1)
+    emb = rng.normal(size=(120, 24))
+    emb /= np.linalg.norm(emb, axis=1, keepdims=True)
+    z, *_ = taste_space(emb)
+    mu, P, _ = rebuild(emb, z)
+    t = json.loads(json.dumps(taste_json(mu, P, "test")))
+    assert np.allclose((emb - np.array(t["mu"])) @ np.array(t["P"]).T, z)
