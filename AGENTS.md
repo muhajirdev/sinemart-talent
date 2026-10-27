@@ -6,9 +6,7 @@ often writes Indonesian, so reply in the language he uses.
 
 ## Never
 
-- **Never put personal data anywhere**: names, phone numbers, emails,
-  addresses, NIK / KTP, social handles of applicants. Not in D1, R2, the repo,
-  commit messages, logs or chat. Code works on `applicant_id` only.
+
 - **Never commit secrets** (`ADMIN_TOKEN`, API tokens, `.dev.vars`) or the
   client's sheet ids and Drive links.
 - **Never name the technology in the app**: no Google, SigLIP, DINO, CLIP,
@@ -21,7 +19,6 @@ often writes Indonesian, so reply in the language he uses.
   screenshots.
 - Never call `/api/reset` or delete picks / applicants. Bad data is marked
   `applicants.noise`, which is reversible.
-- Never scrape or score people who didn't apply.
 
 ## Ask Muajir first
 
