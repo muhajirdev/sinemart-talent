@@ -42,3 +42,10 @@ ALTER TABLE applicants ADD COLUMN noise TEXT;
 
 -- 2026-10-22: "Keduanya tidak" (neither): both faces a clear no.
 ALTER TABLE picks ADD COLUMN neither INTEGER NOT NULL DEFAULT 0;
+
+-- 2026-10-27: where each person came from, and test batches (e.g. "bc"
+-- showcase photos) that are scored but never picked or trained on.
+ALTER TABLE applicants ADD COLUMN source TEXT;
+ALTER TABLE applicants ADD COLUMN test INTEGER NOT NULL DEFAULT 0;
+UPDATE applicants SET source = CASE WHEN id < 200000 THEN '2021' WHEN stage = 'bc' THEN 'bc' ELSE '2026' END;
+UPDATE applicants SET test = 1, noise = NULL WHERE stage = 'bc' AND noise = 'bc';

@@ -15,15 +15,6 @@ export interface Env {
 
 type Rater = { token: string; name: string };
 
-// Test batches (2026-10-27): faces loaded only to see how the model scores
-// them, never picked. Stored with noise = their source tag, so battles,
-// training and the map skip them; the Lab can list them on request.
-const TEST_SOURCES = ["bc"];
-const TEST_SQL = TEST_SOURCES.map((s) => `'${s}'`).join(", ");
-// Where a person came from: 2021 ids are Sinemart's own numbers (stage =
-// the Drive folder); later loads set stage to the source.
-const SOURCE_SQL = "CASE WHEN a.id < 200000 THEN '2021' ELSE a.stage END";
-
 // The app is open to anyone, but applicant photos must stay out of search engines.
 const NOINDEX = "noindex, nofollow, noimageindex";
 
@@ -121,10 +112,10 @@ async function nextPair(env: Env, who: Rater) {
 
   // Queue empty (cold start, or the trainer hasn't refilled it): random pair.
   // Same group only: cewek vs cewek, cowok vs cowok.
-  const a = await env.DB.prepare("SELECT id, gender FROM applicants WHERE noise IS NULL ORDER BY RANDOM() LIMIT 1").first<{ id: number; gender: string | null }>();
+  const a = await env.DB.prepare("SELECT id, gender FROM applicants WHERE noise IS NULL AND test = 0 ORDER BY RANDOM() LIMIT 1").first<{ id: number; gender: string | null }>();
   if (!a) return null;
   const b = await env.DB.prepare(
-    "SELECT id FROM applicants WHERE id != ?1 AND gender IS ?2 AND noise IS NULL ORDER BY RANDOM() LIMIT 1",
+    "SELECT id FROM applicants WHERE id != ?1 AND gender IS ?2 AND noise IS NULL AND test = 0 ORDER BY RANDOM() LIMIT 1",
   ).bind(a.id, a.gender).first<{ id: number }>();
   if (!b) return null;
   return { queue_id: null, left_id: a.id, right_id: b.id };
@@ -204,7 +195,7 @@ async function maybeRetrain(env: Env) {
   const row = await env.DB.prepare(
     `SELECT (SELECT COUNT(*) FROM picks p JOIN applicants a ON a.id = p.left_id JOIN applicants b ON b.id = p.right_id
              WHERE (p.winner_id IS NOT NULL OR p.tie = 1 OR p.neither = 1) AND p.kind != 'repeat' AND a.gender IS b.gender
-               AND a.z IS NOT NULL AND b.z IS NOT NULL AND a.noise IS NULL AND b.noise IS NULL) AS picks,
+               AND a.z IS NOT NULL AND b.z IS NOT NULL AND a.noise IS NULL AND b.noise IS NULL AND a.test = 0 AND b.test = 0) AS picks,
             (SELECT n_picks FROM model WHERE id = 1) AS trained`,
   ).first<{ picks: number; trained: number | null }>();
   if (row && row.trained !== null && row.picks - row.trained >= RETRAIN_EVERY) await retrain(env);
@@ -261,10 +252,8 @@ async function results(env: Env, who: string | null, mode: string | null = null)
        (SELECT COUNT(*) FROM picks p WHERE p.winner_id = a.id) AS wins,
        (SELECT COUNT(*) FROM picks p WHERE (p.winner_id IS NOT NULL OR p.tie = 1 OR p.neither = 1) AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
        (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos,
-       g.phi_dev, g.pallett_dev, g.asymmetry, g.atypicality, ${SOURCE_SQL} AS source,
-       a.noise IS NOT NULL AS test, CASE WHEN a.noise IS NOT NULL THEN a.z END AS z
-     FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id
-     WHERE a.noise IS NULL OR a.noise IN (${TEST_SQL}) ORDER BY a.score DESC NULLS LAST, a.id`,
+       g.phi_dev, g.pallett_dev, g.asymmetry, g.atypicality, a.source, a.test, CASE WHEN a.test = 1 THEN a.z END AS z
+     FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id WHERE a.noise IS NULL ORDER BY a.score DESC NULLS LAST, a.id`,
   ).all<Record<string, unknown>>();
   // Retrains never touch test faces, so their stored score is from load
   // time: score them with the current straight line instead.
@@ -408,7 +397,7 @@ async function setNoise(req: Request, env: Env, who: Rater, ctx: ExecutionContex
 async function outsideCheck(env: Env) {
   const { results } = await env.DB.prepare(
     `SELECT l.source, l.label, a.gender, a.score FROM outside_labels l JOIN applicants a ON a.id = l.applicant_id
-     WHERE a.score IS NOT NULL AND a.noise IS NULL`,
+     WHERE a.score IS NOT NULL AND a.noise IS NULL AND a.test = 0`,
   ).all<{ source: string; label: number; gender: string; score: number }>();
   const out = [];
   for (const source of [...new Set(results.map((r) => r.source))]) {
@@ -512,7 +501,7 @@ export default {
     if (url.pathname === "/api/gender" && req.method === "POST") return setGender(req, env, ctx);
     if (url.pathname === "/api/noise" && req.method === "POST") return setNoise(req, env, who, ctx);
     if (url.pathname === "/api/noise" && req.method === "GET") {
-      return json((await env.DB.prepare(`SELECT id, gender, noise AS by FROM applicants WHERE noise IS NOT NULL AND noise NOT IN (${TEST_SQL}) ORDER BY id`).all()).results);
+      return json((await env.DB.prepare("SELECT id, gender, noise AS by FROM applicants WHERE noise IS NOT NULL ORDER BY id").all()).results);
     }
     if (url.pathname === "/api/check" && req.method === "GET") return json(await outsideCheck(env));
     if (url.pathname === "/api/raters" && req.method === "GET") return json(await raterAgreement(env));

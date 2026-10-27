@@ -54,6 +54,13 @@ def taste_space(emb: np.ndarray, looks_k: int = 12, rank: int = 16, seed: int = 
     return z, labels, head.q, peak_group
 
 
+def source(aid: int, stage: str) -> str:
+    """Where a person came from, for the Lab's Sources checklist: 2021 ids are
+    Sinemart's own numbers (stage = the Drive folder); later loads put the
+    source in stage ("2026")."""
+    return "2021" if aid < 200000 else stage
+
+
 def main(argv: list[str]) -> None:
     if len(argv) not in (4, 5):
         sys.exit("usage: python -m sinemart.publish EMB.npz quality.csv OUT_DIR [gender.csv]")
@@ -88,15 +95,17 @@ def main(argv: list[str]) -> None:
         sql.write("DELETE FROM photos;\n")
         # People from an earlier load that aren't in this one would carry
         # coordinates from an old taste space: drop them (their picks stay).
-        sql.write(f"DELETE FROM applicants WHERE id NOT IN ({', '.join(str(a) for a in ids.tolist())});\n")
+        # Test batches (test = 1, e.g. "bc") are kept; re-project them
+        # afterwards with sinemart.project.
+        sql.write(f"DELETE FROM applicants WHERE test = 0 AND id NOT IN ({', '.join(str(a) for a in ids.tolist())});\n")
         for i, aid in enumerate(ids.tolist()):
             sql.write(
-                "INSERT INTO applicants (id, image_key, stage, look, z, gender, gender_src) VALUES "
-                f"({aid}, {q('crops/' + main_crop[aid])}, {q(quality[aid]['stage'])}, {int(look[i])}, "
+                "INSERT INTO applicants (id, image_key, stage, source, look, z, gender, gender_src) VALUES "
+                f"({aid}, {q('crops/' + main_crop[aid])}, {q(quality[aid]['stage'])}, {q(source(aid, quality[aid]['stage']))}, {int(look[i])}, "
                 f"'{json.dumps(rnd(z[i]))}', {q(gender[aid]) if aid in gender else 'NULL'}, "
                 f"{q('auto') if aid in gender else 'NULL'}) "
                 # A gender someone fixed by hand on the scores page survives a reload.
-                "ON CONFLICT (id) DO UPDATE SET image_key = excluded.image_key, stage = excluded.stage, "
+                "ON CONFLICT (id) DO UPDATE SET image_key = excluded.image_key, stage = excluded.stage, source = excluded.source, "
                 "look = excluded.look, z = excluded.z, score = NULL, score_std = NULL, model = NULL, "
                 "gender = CASE WHEN applicants.gender_src = 'manual' THEN applicants.gender ELSE excluded.gender END, "
                 "gender_src = CASE WHEN applicants.gender_src = 'manual' THEN 'manual' ELSE excluded.gender_src END;\n"

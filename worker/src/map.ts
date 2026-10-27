@@ -70,7 +70,7 @@ export async function territory(
   }
 
   const { results } = await env.DB.prepare(
-    "SELECT id, z, score, look FROM applicants WHERE z IS NOT NULL AND noise IS NULL AND (?1 IS NULL OR gender = ?1)",
+    "SELECT id, z, score, look FROM applicants WHERE z IS NOT NULL AND noise IS NULL AND test = 0 AND (?1 IS NULL OR gender = ?1)",
   ).bind(gender).all<{ id: number; z: string; score: number | null; look: number | null }>();
   // This group's peaks, keeping their global numbers (k) for colours/labels.
   const keep = q.map((_, k) => gender === null || pg[k] === null || pg[k] === gender);

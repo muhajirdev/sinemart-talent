@@ -32,7 +32,7 @@ export async function loadData(env: Env, rater: string | null = null) {
   const peaks = init.peaks;
   const peakGroup: (string | null)[] = init.peak_gender ?? [];
   const faces = (
-    await env.DB.prepare("SELECT id, z, gender FROM applicants WHERE z IS NOT NULL AND noise IS NULL ORDER BY id")
+    await env.DB.prepare("SELECT id, z, gender FROM applicants WHERE z IS NOT NULL AND noise IS NULL AND test = 0 ORDER BY id")
       .all<{ id: number; z: string; gender: string | null }>()
   ).results;
   const index = new Map(faces.map((f, i) => [f.id, i]));

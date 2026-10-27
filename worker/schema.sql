@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS applicants (
   gender     TEXT,                         -- 'f' cewek | 'm' cowok: groups battles and hills, never the score
   gender_src TEXT,                         -- 'auto' (zero-shot guess) | 'manual' (fixed on the scores page)
   noise      TEXT,                         -- bad photos (not a face, someone else): who marked it; NULL = fine
+  source     TEXT,                         -- where they came from: '2021' | '2026' | 'bc' (Lab "Sources" checklist)
+  test       INTEGER NOT NULL DEFAULT 0,   -- 1 = test batch: scored on the Lab only, never in battles or training
   updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS applicants_score ON applicants (score DESC);

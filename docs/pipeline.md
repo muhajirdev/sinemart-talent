@@ -121,7 +121,8 @@ account), copied to `sinemart-talent/bc/`. One applicant per post, ids
 201 of 259 posts have a usable face (three crops of the account's cartoon
 logo were dropped by hand). They are a **model test only**: projected into
 the live taste space with `sinemart.project` (not re-published) and marked
-`noise = 'bc'`, so they never enter battles, training or leaderboards.
+`test = 1` (`source = 'bc'`), so they never enter battles or training;
+the Lab shows them only when "bc" is ticked under Sources.
 
 ### Noise and duplicates
 
@@ -627,7 +628,7 @@ caching. No bucket is public.
 
 | Table | One row per | Written by | Holds |
 |---|---|---|---|
-| `applicants` | person | `publish.py`; retrain; gender/noise endpoints | crop key, stage, taste-space `z`, `look`, `score`, `score_std`, `gender`, `gender_src`, `noise` |
+| `applicants` | person | `publish.py`; retrain; gender/noise endpoints | crop key, stage, taste-space `z`, `look`, `score`, `score_std`, `gender`, `gender_src`, `noise`, `source` (2021 / 2026 / bc), `test` (1 = test batch, never picked) |
 | `photos` | whole photo | `publish.py` | viewing order, kind, R2 key, whether its face counted |
 | `raters` | rater | `/api/login` | token, name |
 | `picks` | answer | `/api/pick`, `/api/undo` | rater, both ids, winner / tie / neither, kind, ms, time |

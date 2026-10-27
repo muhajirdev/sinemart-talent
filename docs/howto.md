@@ -221,19 +221,19 @@ are; re-publishing would refit both.
 3. Score = `w · z` with `w` from `model.params_line` (the Lab shows
    `sigmoid(score − gender mean)` as 0–100).
 4. Upload the crops to R2 `crops/` and insert `applicants` rows with
-   `noise = '<tag>'` and `stage = '<tag>'`: noise keeps them out of battles,
-   training, leaderboards and the map. Add the tag to `TEST_SOURCES` in
-   `worker/src/index.ts` so the Lab's Sources checklist offers it (and keeps
-   it out of "Marked as bad photos").
+   `test = 1` and `source = stage = '<tag>'`. `test` keeps them out of
+   battles, training, the map and the screening check; the Lab's Sources
+   checklist offers them, unticked by default. Don't use `noise` for this:
+   that is for bad photos and lists them under "Marked as bad photos".
 5. For a comparison model, the same with `alt_z WHERE key = 'mN'` and its
    `params_line`; insert `alt_z` rows for the batch (retrain ignores ids
    that aren't in training).
 
-Gotchas: retrains never touch noise rows, so the stored `score` is from the
+Gotchas: retrains never touch test rows, so the stored `score` is from the
 model at load time; the Lab re-scores test batches with the current line on
 every load (other models need their `alt_z` rows). `sinemart.publish`
-deletes every applicant not in its load, so a re-publish removes the batch
-(re-run step 2 onwards afterwards).
+keeps test rows but builds a new taste space, so after a re-publish their
+`z` is stale: re-run step 2 onwards.
 
 ## Add a comparison model
 
