@@ -50,7 +50,7 @@ npx wrangler deploy
 ```
 
 There is no CI and no auto-deploy: merging a PR does **not** deploy. PRs merge
-into the default branch `claude/project-thread-60dxh0`.
+into the default branch `main` (before 2026-10-27: `claude/project-thread-60dxh0`).
 
 After deploying, open the picking page and the Lab once and check a pair loads
 and the scores show.

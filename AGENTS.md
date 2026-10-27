@@ -34,7 +34,7 @@ often writes Indonesian, so reply in the language he uses.
 
 ## How to work
 
-- Branch from the default branch `claude/project-thread-60dxh0`, open a PR
+- Branch from the default branch `main`, open a PR
   there, merge when tests pass.
 - Before pushing: `cd pipeline && python -m pytest -q` and
   `cd worker && npx tsc --noEmit`.
