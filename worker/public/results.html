@@ -139,6 +139,7 @@
 <section id="contrast" class="card contrast" hidden></section>
 <section id="noise" class="card" hidden></section>
 <h2 id="boardTitle" hidden>Leaderboard</h2>
+<div class="chips" id="srcs"></div>
 <div class="chips" id="chips"></div>
 <ol id="faces"></ol>
 <div class="lb" id="lb" hidden role="dialog" aria-modal="true" aria-label="Candidate photos">
@@ -166,7 +167,9 @@
     const m = d.model || {};
     const p = d.picks || { decided: 0, total: 0, raters: 0 };
     const trained = !!m.trained_at;
-    const scored = d.faces.filter((f) => f.score != null);
+    // The 0-100 scale is against an average applicant, so a test batch
+    // switched on doesn't move anyone else's number.
+    const scored = d.faces.filter((f) => f.score != null && !f.test);
     const mean = scored.reduce((a, f) => a + f.score, 0) / (scored.length || 1);
     const toNext = Math.max(0, (m.n_picks || 0) + m.retrain_every - p.decided);
     $("model").hidden = false;
@@ -232,6 +235,9 @@
   if (qs.get("rater")) state.rater = qs.get("rater");
   if (qs.get("cluster")) state.filter = qs.get("cluster");
   state.fresh = qs.get("battles") === "none";
+  // Sources shown on the leaderboard; null = the default (every applicant
+  // source, no test batches).
+  state.sources = qs.get("sources") ? new Set(qs.get("sources").split(",")) : null;
   function saveUrl() {
     const p = new URLSearchParams();
     if (state.gender !== "f") p.set("gender", state.gender);
@@ -239,6 +245,7 @@
     if (state.rater) p.set("rater", state.rater);
     if (state.filter !== "all") p.set("cluster", state.filter);
     if (state.fresh) p.set("battles", "none");
+    if (state.sources) p.set("sources", [...state.sources].join(","));
     history.replaceState(null, "", location.pathname + (p.size ? "?" + p : ""));
   }
   // Hills are numbered and coloured within their group (cewek / cowok).
@@ -290,13 +297,28 @@
   function renderBoard() {
     const d = state.d;
     state.geo = geoPercentiles(d.faces);
-    const hills = [...new Set(d.faces.map((f) => f.look).filter((x) => x != null))].sort((a, b) => a - b);
+    const hills = [...new Set(d.faces.filter((f) => !f.test).map((f) => f.look).filter((x) => x != null))].sort((a, b) => a - b);
     $("boardTitle").hidden = false;
+    // Sources checklist: where people came from (2021, 2026, ...). Test
+    // batches like "bc" were never picked; they're off unless ticked.
+    const srcs = [...new Map(d.faces.map((f) => [f.source, !!f.test])).entries()]
+      .sort(([a, at], [b, bt]) => at - bt || String(a).localeCompare(String(b)));
+    const on = (src, test) => src == null || (state.sources ? state.sources.has(String(src)) : !test); // one rater's view has no sources
+    $("srcs").hidden = srcs.length < 2;
+    $("srcs").innerHTML = `<span class="meta" style="align-self:center">Sources:</span>` + srcs.map(([src, test]) =>
+      `<label class="meta" style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-src="${esc(src)}" ${on(src, test) ? "checked" : ""}>
+        ${esc(src)}${test ? " (test, not picked)" : ""} (${d.faces.filter((f) => f.source === src).length})</label>`).join("");
+    $("srcs").querySelectorAll("input").forEach((c) => (c.onchange = () => {
+      const picked = new Set([...$("srcs").querySelectorAll("input:checked")].map((x) => x.dataset.src));
+      const dflt = srcs.every(([src, test]) => picked.has(String(src)) === !test);
+      state.sources = dflt ? null : picked; saveUrl(); renderBoard();
+    }));
+    const shown = d.faces.filter((f) => on(f.source, f.test));
     $("chips").innerHTML = [["all", "All"], ...hills.map((k) => [String(k), hn(k)])]
       .map(([v, label]) => `<button data-f="${v}" aria-pressed="${state.filter === v}">${label}</button>`).join("");
     // "No battles yet": people nobody has picked for or against so far (in
     // this group, noise already left out), on top of the cluster chosen.
-    const inCluster = d.faces.filter((f) => state.filter === "all" || String(f.look) === state.filter);
+    const inCluster = shown.filter((f) => state.filter === "all" || String(f.look) === state.filter);
     const fresh = inCluster.filter((f) => !f.games).length;
     $("chips").innerHTML += `<button data-fresh aria-pressed="${state.fresh}" style="margin-left:auto">No battles yet (${fresh})</button>`;
     $("chips").querySelectorAll("button[data-f]").forEach((b) => (b.onclick = () => { state.filter = b.dataset.f; saveUrl(); renderBoard(); }));
@@ -312,7 +334,7 @@
         <div>
           <div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
           <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>
-          <div class="meta">#${f.id} · ${f.look == null ? "no cluster" : `<span class="tag ${hc(f.look)}">${hn(f.look)}</span>`}${f.gender ? ` · ${gname[f.gender]}${f.gender_src === "manual" ? " (fixed)" : ""}
+          <div class="meta">#${f.id}${f.test ? ` · <span class="tag" style="--c:var(--muted)">${esc(f.source)}</span>` : ""} · ${f.look == null ? "no cluster" : `<span class="tag ${hc(f.look)}">${hn(f.look)}</span>`}${f.gender ? ` · ${gname[f.gender]}${f.gender_src === "manual" ? " (fixed)" : ""}
               <button class="gfix" data-id="${f.id}" data-g="${f.gender === "f" ? "m" : "f"}">wrong? move to ${gname[f.gender === "f" ? "m" : "f"]}</button>` : ""}</div>
           <div class="meta">${battles(f)}${f.n_photos > 1 ? ` · ${f.n_photos} photos` : ""}${certainty(f)}</div>
           <div class="meta">${geoLine(f)}</div>

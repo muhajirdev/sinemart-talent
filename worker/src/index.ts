@@ -15,6 +15,15 @@ export interface Env {
 
 type Rater = { token: string; name: string };
 
+// Test batches (2026-10-27): faces loaded only to see how the model scores
+// them, never picked. Stored with noise = their source tag, so battles,
+// training and the map skip them; the Lab can list them on request.
+const TEST_SOURCES = ["bc"];
+const TEST_SQL = TEST_SOURCES.map((s) => `'${s}'`).join(", ");
+// Where a person came from: 2021 ids are Sinemart's own numbers (stage =
+// the Drive folder); later loads set stage to the source.
+const SOURCE_SQL = "CASE WHEN a.id < 200000 THEN '2021' ELSE a.stage END";
+
 // The app is open to anyone, but applicant photos must stay out of search engines.
 const NOINDEX = "noindex, nofollow, noimageindex";
 
@@ -252,9 +261,19 @@ async function results(env: Env, who: string | null, mode: string | null = null)
        (SELECT COUNT(*) FROM picks p WHERE p.winner_id = a.id) AS wins,
        (SELECT COUNT(*) FROM picks p WHERE (p.winner_id IS NOT NULL OR p.tie = 1 OR p.neither = 1) AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
        (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos,
-       g.phi_dev, g.pallett_dev, g.asymmetry, g.atypicality
-     FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id WHERE a.noise IS NULL ORDER BY a.score DESC NULLS LAST, a.id`,
+       g.phi_dev, g.pallett_dev, g.asymmetry, g.atypicality, ${SOURCE_SQL} AS source,
+       a.noise IS NOT NULL AS test, CASE WHEN a.noise IS NOT NULL THEN a.z END AS z
+     FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id
+     WHERE a.noise IS NULL OR a.noise IN (${TEST_SQL}) ORDER BY a.score DESC NULLS LAST, a.id`,
   ).all<Record<string, unknown>>();
+  // Retrains never touch test faces, so their stored score is from load
+  // time: score them with the current straight line instead.
+  const lineParams = (await env.DB.prepare("SELECT params_line FROM model WHERE id = 1").first<{ params_line: string | null }>())?.params_line;
+  const line1 = lineParams ? arrowFrom(JSON.parse(lineParams)) : null;
+  for (const f of faces) {
+    if (f.test && f.z) f.score = line1 ? line1.score(JSON.parse(f.z as string)) : null;
+    delete f.z;
+  }
   let peakGender: (string | null)[] | null = null;
   if (mode && mode !== "one" && mode !== "hills" && mode !== "line") {
     // Model 2 (another embedding), trained on the same picks. "m2" is that
@@ -275,6 +294,8 @@ async function results(env: Env, who: string | null, mode: string | null = null)
       f.look = h && z ? h.hill(z, g) : null;
       f.score_std = null;
     }
+    faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
+  } else if (!mode || mode === "line") {
     faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
   }
   if (mode === "one" || mode === "hills") {
@@ -491,7 +512,7 @@ export default {
     if (url.pathname === "/api/gender" && req.method === "POST") return setGender(req, env, ctx);
     if (url.pathname === "/api/noise" && req.method === "POST") return setNoise(req, env, who, ctx);
     if (url.pathname === "/api/noise" && req.method === "GET") {
-      return json((await env.DB.prepare("SELECT id, gender, noise AS by FROM applicants WHERE noise IS NOT NULL ORDER BY id").all()).results);
+      return json((await env.DB.prepare(`SELECT id, gender, noise AS by FROM applicants WHERE noise IS NOT NULL AND noise NOT IN (${TEST_SQL}) ORDER BY id`).all()).results);
     }
     if (url.pathname === "/api/check" && req.method === "GET") return json(await outsideCheck(env));
     if (url.pathname === "/api/raters" && req.method === "GET") return json(await raterAgreement(env));

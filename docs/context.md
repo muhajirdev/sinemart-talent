@@ -92,6 +92,7 @@ team A/B picks (picking page ► Worker ► D1 picks)
 | 2026-10-25 | "Keduanya kurang menarik" (neither) added. Trained as "both below the gender's no line", not as a tie. | The goal is spotting clear no's. |
 | 2026-10-27 | Lab leaderboard "No battles yet (N)" filter (`?battles=none`). | Find people never shown. |
 | 2026-10-27 | **"bc" test batch**: 201 faces from an Instagram showcase account (R2 `talent-applicant/bc/`, expandra account) loaded as a model test only: ids 900001+, `stage = 'bc'`, `noise = 'bc'`, so they are never in battles, training or leaderboards. Projected into the live taste space (`sinemart.project`), not re-published; scored with the live line at load time. | Muajir: "test our model against this new bucket"; "no need to be in listing for pickings". |
+| 2026-10-27 | Lab leaderboard **Sources** checklist (2021, 2026, bc). Test batches (`TEST_SOURCES` in `index.ts`) are off by default; ticked, they rank among applicants, scored live by Model 1's line, and the 0–100 scale stays relative to applicants only. They no longer show under "Marked as bad photos". | Muajir: "show applicant sources, like checklist"; "we can choose to include this bc sources". |
 
 
 ## Data and personal data rules

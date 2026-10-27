@@ -597,7 +597,8 @@ in the URL.
 - **Rater agreement.** Per rater: how well the team model predicts their
   picks; how well each other rater's personal model does; plain agreement
   where two raters judged the same pair; and the repeat ceiling per rater.
-- **Leaderboard.** Per gender, filter by cluster, "No battles yet (N)" for
+- **Leaderboard.** Per gender, a **Sources** checklist (2021, 2026, and test
+  batches like "bc", off by default; `?sources=2021,2026,bc`), filter by cluster, "No battles yet (N)" for
   people never in a decided battle. Opening a face shows all photos, the
   golden-ratio overlay on request, the battle history (who they met, the
   result, who judged, skips included) and "wrong? move to …".
