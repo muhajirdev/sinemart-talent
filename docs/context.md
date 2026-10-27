@@ -91,7 +91,7 @@ team A/B picks (picking page ► Worker ► D1 picks)
 | 2026-10-22 | Bad data is marked as **noise**, not deleted: `applicants.noise` = who marked it (or `'duplicate'`). Noise people drop out of battles, training and leaderboards; their picks stay stored; restorable from the Lab. 15 exact duplicate 2026 sign-ups marked `duplicate`. | Reversible. |
 | 2026-10-25 | "Keduanya kurang menarik" (neither) added. Trained as "both below the gender's no line", not as a tie. | The goal is spotting clear no's. |
 | 2026-10-27 | Lab leaderboard "No battles yet (N)" filter (`?battles=none`). | Find people never shown. |
-| 2026-10-27 | Do **not** scrape or score Instagram / non-applicants (platform terms, UU PDP: faces are biometric data, minors). Consented sources only (Sinemart's own casting account form, agencies, casting platforms). | Legal and reputation. |
+
 
 ## Data and personal data rules
 
