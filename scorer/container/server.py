@@ -33,9 +33,9 @@ import numpy as np
 sys.path.insert(0, os.environ.get("PIPELINE_DIR", "/app/pipeline"))
 
 MODELS_DIR = os.environ.get("MODELS_DIR", "/app/models")
-# App key -> sinemart.embed model name. Model 1 is the ranker; Model 6 the
-# best comparison model at 2026-10-27. More can be added here (and to the
-# image) without touching the app's maths.
+# App key -> sinemart.embed model name: Model 6 (the leaderboard's ranker
+# since 2026-10-27) and Model 1. More can be added here (and to the image)
+# without touching the app's maths.
 KEYS = dict(kv.split(":") for kv in os.environ.get("SCORER_MODELS", "m1:siglip2,m6:clipl").split(","))
 MAX_BYTES = 20 * 1024 * 1024
 

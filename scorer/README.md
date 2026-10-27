@@ -25,7 +25,8 @@ browser ─► TanStack Start on Workers (src/)        ─► Container (contain
   only (the container writes none to disk and logs no requests). Sign-in
   uses a name that already exists on the picking page; the scorer never
   creates raters.
-- **Models:** Model 1 and Model 6 (`MODELS` in `src/lib/score.ts`,
+- **Models:** Model 6 (the leaderboard's ranker since 2026-10-27, shown
+  first) and Model 1 (`MODELS` in `src/lib/score.ts`,
   `SCORER_MODELS` in `container/server.py`). Adding one: put its
   `sinemart.embed` name in both, upload its `taste.json`, rebuild.
 

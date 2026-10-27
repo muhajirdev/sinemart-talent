@@ -11,9 +11,11 @@ import { getContainer } from '@cloudflare/containers'
 
 // The Lab names comparison models "Model N" by key order (m2 = Model 2, ...),
 // so these labels match what the team sees there. Never name the technology.
+// Model 6's line ranks the leaderboard since 2026-10-27 (RANKER in
+// worker/src/retrain.ts), so it comes first.
 export const MODELS = [
-  { key: 'm1', label: 'Model 1' },
-  { key: 'm6', label: 'Model 6' },
+  { key: 'm6', label: 'Model 6', ranker: true },
+  { key: 'm1', label: 'Model 1', ranker: false },
 ] as const
 type Key = (typeof MODELS)[number]['key']
 
@@ -28,7 +30,9 @@ type Embedded = {
 }
 
 export type PhotoResult = { face: boolean; ok: boolean; reasons: string[]; crop: string | null }
-export type ModelResult = { key: string; label: string; score: number; rank: number; of: number; percentile: number }
+export type ModelResult = {
+  key: string; label: string; ranker: boolean; score: number; rank: number; of: number; percentile: number
+}
 export type ScoreResult = {
   gender: 'f' | 'm'
   genderGuess: 'f' | 'm' | null
@@ -136,7 +140,7 @@ export async function scorePhotos(photos: ArrayBuffer[], gender: 'f' | 'm' | 'au
     const mean = scores.reduce((a, b) => a + b, 0) / scores.length
     const above = scores.filter((s) => s > raw).length
     models.push({
-      key: m.key, label: m.label,
+      key: m.key, label: m.label, ranker: m.ranker,
       score: Math.round(100 / (1 + Math.exp(-(raw - mean)))), // as the Lab: vs an average applicant
       rank: above + 1, of: scores.length,
       percentile: Math.round((scores.filter((s) => s < raw).length / scores.length) * 100),

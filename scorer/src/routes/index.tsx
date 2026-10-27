@@ -145,7 +145,7 @@ function Result({ r }: { r: ScoreResult }) {
           <div className="models">
             {r.models.map((m) => (
               <div key={m.key} className="card" style={{ margin: 0, background: '#333' }}>
-                <div className="note">{m.label} · garis lurus</div>
+                <div className="note">{m.label} · garis lurus{m.ranker ? ' · peringkat utama' : ''}</div>
                 <div className="score">{m.score}</div>
                 <div className="bar"><i style={{ width: `${m.score}%` }} /></div>
                 <div>Peringkat #{m.rank} dari {m.of} {GROUP[r.gender]}</div>
