@@ -4,7 +4,7 @@
 
 import { territory } from "./map";
 import {
-  ANSWERED, MIN_PICKS, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, raterAgreement, raterModel, retrain,
+  ANSWERED, MIN_PICKS, RANKER, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, rankerLine, raterAgreement, raterModel, retrain,
 } from "./retrain";
 
 export interface Env {
@@ -256,15 +256,28 @@ async function results(env: Env, who: string | null, mode: string | null = null)
      FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id WHERE a.noise IS NULL ORDER BY a.score DESC NULLS LAST, a.id`,
   ).all<Record<string, unknown>>();
   // Retrains never touch test faces, so their stored score is from load
-  // time: score them with the current straight line instead.
-  const lineParams = (await env.DB.prepare("SELECT params_line FROM model WHERE id = 1").first<{ params_line: string | null }>())?.params_line;
-  const line1 = lineParams ? arrowFrom(JSON.parse(lineParams)) : null;
+  // time: score them with the ranker's current straight line instead.
+  const rl = await rankerLine(env);
   for (const f of faces) {
-    if (f.test && f.z) f.score = line1 ? line1.score(JSON.parse(f.z as string)) : null;
+    if (f.test) { const z = rl?.zs.get(f.id as number); f.score = rl && z ? rl.line.score(z) : null; }
     delete f.z;
   }
   let peakGender: (string | null)[] | null = null;
-  if (mode && mode !== "one" && mode !== "hills" && mode !== "line") {
+  if (mode === "1:line") {
+    // Model 1's own straight line, a comparison once another model ranks.
+    const p = (await env.DB.prepare("SELECT params_line FROM model WHERE id = 1").first<{ params_line: string | null }>())?.params_line;
+    const line1 = p ? arrowFrom(JSON.parse(p)) : null;
+    const zs = new Map(
+      (await env.DB.prepare("SELECT id, z FROM applicants WHERE z IS NOT NULL").all<{ id: number; z: string }>())
+        .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
+    );
+    for (const f of faces) {
+      const z = zs.get(f.id as number);
+      f.score = line1 && z ? line1.score(z) : null;
+      f.score_std = null;
+    }
+    faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
+  } else if (mode && mode !== "one" && mode !== "hills" && mode !== "line") {
     // Model 2 (another embedding), trained on the same picks. "m2" is that
     // embedding with many hills, "m2:one" one hill per group, "m2:line" the
     // straight arrow (clusters still from its hills).
@@ -308,7 +321,7 @@ async function results(env: Env, who: string | null, mode: string | null = null)
   if (model) delete model.init;
   return json({
     model: {
-      ...model, mode: mode ?? "line", hills: init?.peaks?.length ?? 0, alternates,
+      ...model, mode: mode ?? "line", ranker: RANKER, hills: init?.peaks?.length ?? 0, alternates,
       peak_gender: peakGender ?? init?.peak_gender ?? [],
       retrain_every: RETRAIN_EVERY,
     },
@@ -480,7 +493,8 @@ export default {
       if (!only && mode && mode !== "line") {
         const r = (await (await results(env, null, mode)).json()) as { faces: { id: number; score: number | null; look: number | null }[] };
         const faces = new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }]));
-        if (mode === "one" || mode === "hills") {
+        if (mode === "one" || mode === "hills" || mode === "1:line") {
+          // Model 1's line shows Model 1's many-hills clusters, like the ranker does.
           const m = await env.DB.prepare("SELECT params, params_one FROM model WHERE id = 1")
             .first<{ params: string | null; params_one: string | null }>();
           return json(await territory(env, { params: (mode === "one" ? m?.params_one : m?.params) ?? null, faces }, gender));

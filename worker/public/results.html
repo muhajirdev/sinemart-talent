@@ -189,13 +189,14 @@
     }
     $("model").innerHTML = `
       <div class="stats">
-        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "line" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, straight line)"} · ${isRule(m.mode, m.alternates) ? `face proportions, symmetry and averageness${m.mode === "geo_raw" ? " measured on the photos as they are" : " measured with faces straightened"}; no clusters` : state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
+        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "line" || !m.mode ? "shown here, and picks the battles" : `shown here (battles use ${rankerName(m.alternates)}, straight line)`} · ${isRule(m.mode, m.alternates) ? `face proportions, symmetry and averageness${m.mode === "geo_raw" ? " measured on the photos as they are" : " measured with faces straightened"}; no clusters` : state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
         <div class="stat"><b>${p.decided - (p.neithers || 0)}</b><span>comparisons by ${p.raters} rater${p.raters === 1 ? "" : "s"} (one face picked, or ${p.ties || 0} "sama saja"); plus ${p.neithers || 0} "keduanya kurang menarik" and ${p.total - p.decided} skipped</span></div>
-        <div class="stat"><b>${pct(m.heldout_line)}</b><span>Model 1 straight line: held-out agreement</span></div>
+        <div class="stat"><b>${pct(state.ranker === "m1" ? m.heldout_line : (m.alternates || []).find((a) => a.key === state.ranker)?.heldout_line)}</b><span>${rankerName(m.alternates)} straight line (ranks everyone, picks the battles): held-out agreement</span></div>
         <div class="stat" id="ceil"><b>–</b><span>Raters repeating their own pick (no repeats yet)</span></div>
       </div>
       <table class="cmp"><thead><tr><th>Held-out agreement</th><th>Straight line</th><th>Many clusters</th><th>One cluster</th></tr></thead><tbody>
-        ${[["Model 1", m.heldout_line, m.heldout_hills, m.heldout_one], ...(m.alternates || []).filter((a) => a.has_z).map((a) => [altName(a.key, m.alternates), a.heldout_line, a.heldout, a.heldout_one])]
+        ${[["Model 1", m.heldout_line, m.heldout_hills, m.heldout_one, "m1"], ...(m.alternates || []).filter((a) => a.has_z).map((a) => [altName(a.key, m.alternates), a.heldout_line, a.heldout, a.heldout_one, a.key])]
+          .map(([n, l, a, b, k]) => [k === state.ranker ? `${n} (ranks)` : n, l, a, b])
           .map(([n, l, a, b]) => `<tr><td>${n}</td><td>${pct(l)}</td><td>${pct(a)}</td><td>${pct(b)}</td></tr>`).join("")}
         ${(m.alternates || []).filter((a) => a.has_fixed).map((a) => `<tr><td>${a.has_z ? altName(a.key, m.alternates) + " fixed rule" : altName(a.key, m.alternates)}</td>
           <td colspan="3">${pct(a.heldout_fixed)} <span style="color:var(--muted)">(fixed rule, not trained on picks)</span></td></tr>`).join("")}
@@ -226,7 +227,7 @@
     $("msg").hidden = true;
   }
 
-  const state = { d: null, mean: 0, filter: "all", fresh: false, map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 }, gender: "f", pg: [], mode: "line" };
+  const state = { d: null, mean: 0, filter: "all", fresh: false, map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 }, gender: "f", pg: [], mode: "line", ranker: "m1" };
   // The view lives in the URL (?gender=m&model=m3:one&rater=Siska&cluster=4&battles=none),
   // so a refresh or a shared link opens the same view. Defaults are left out.
   const qs = new URLSearchParams(location.search);
@@ -263,7 +264,12 @@
   const altName = (key, alts) => isRule(key, alts) ? RULES[key] ?? "Golden ratio"
     : `Model ${(alts || []).filter((a) => a.has_z).findIndex((a) => a.key === key) + 2}`;
   const variantName = { line: "straight line", one: "one cluster", many: "many clusters" };
-  const modeName = (mode, alts) => !mode || mode === "line" ? "Model 1 · straight line"
+  // The model whose straight line ranks everyone and picks the battles
+  // ("line" mode); 2026-10-27 Model 6, before that Model 1.
+  const rankerKey = () => (state.ranker === "m1" ? "1" : state.ranker);
+  const rankerName = (alts) => (state.ranker === "m1" ? "Model 1" : altName(state.ranker, alts));
+  const modeName = (mode, alts) => !mode || mode === "line" ? `${rankerName(alts)} · straight line`
+    : mode === "1:line" ? "Model 1 · straight line"
     : mode === "one" ? "Model 1 · one cluster"
     : mode === "hills" ? "Model 1 · many clusters"
     : isRule(mode, alts) ? altName(mode, alts)
@@ -651,6 +657,7 @@
     if (r.status === 401) { $("msg").innerHTML = '<a href="/">Sign in on the picking page first</a>.'; return; }
     const data = await r.json();
     state.pg = data.model?.peak_gender || [];
+    state.ranker = data.model?.ranker || "m1";
     if (!state.rater) renderModes(data.model?.alternates);
     // One group at a time: scores only compare within cewek or within cowok.
     const grouped = data.faces.some((f) => f.gender);
@@ -696,10 +703,11 @@
   // Which model ranks the page: Model 1 or Model 2+ (another embedding),
   // and its shape: a straight line (what battles use), many clusters, or one
   // cluster per group.
-  const modeOf = (model, c) => model === "1" ? ({ line: "line", one: "one", many: "hills" })[c]
+  const modeOf = (model, c) => c === "line" && model === rankerKey() ? "line"
+    : model === "1" ? ({ line: "1:line", one: "one", many: "hills" })[c]
     : c === "many" ? model : `${model}:${c}`;
   function renderModes(alts) {
-    const model = ["line", "hills", "one"].includes(state.mode) ? "1" : state.mode.split(":")[0];
+    const model = state.mode === "line" ? rankerKey() : ["hills", "one"].includes(state.mode) ? "1" : state.mode.split(":")[0];
     const c = state.mode === "line" || state.mode.endsWith(":line") ? "line"
       : state.mode === "one" || state.mode.endsWith(":one") ? "one" : "many";
     const models = [["1", "Model 1"], ...(alts || []).filter((a) => a.has_z).map((a) => [a.key, altName(a.key, alts)]),
