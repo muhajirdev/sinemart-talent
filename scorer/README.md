@@ -42,11 +42,22 @@ npm run deploy     # builds the image (~5 GB, weights baked in) and pushes it
 The container is a custom instance (2 vCPU, 6 GiB) that sleeps after 30
 quiet minutes; the first photo after that waits while ~3 GB of weights load.
 
+Live since 2026-10-27: <https://sinemart-scorer.qalam.workers.dev>, image
+`registry.cloudflare.com/67f961331110b81774851ee4f54349b9/sinemart-scorer:v1`.
+
 Behind an HTTPS proxy that re-signs traffic (e.g. a Claude cloud session),
-build the image yourself with the proxy CA as a build secret, push it with
-`wrangler containers push`, and point `image` in `wrangler.jsonc` at the
-pushed reference:
+`npm run deploy` can't build the image. Build it yourself, push it, and
+deploy a copy of this folder whose `wrangler.jsonc` has `image` set to the
+pushed reference (and no `image_build_context`):
 
 ```bash
-docker build --secret id=ca,src=<proxy-ca.crt> -f scorer/container/Dockerfile -t sinemart-scorer .   # from the repo root
+# from the repo root; BASE only if Docker Hub rate-limits (429)
+docker build --secret id=ca,src=<proxy-ca.crt> --build-arg BASE=mirror.gcr.io/library/python:3.13-slim \
+  -f scorer/container/Dockerfile -t sinemart-scorer:v2 .
+cd scorer && npx wrangler containers push sinemart-scorer:v2   # retry if a big layer times out; done layers are skipped
 ```
+
+Gotchas: the registry times out committing a layer much over ~1.7 GB, so
+the weights are one layer per model; right after a deploy the container app
+"provisions" for a few minutes before the first photo can be scored; the
+first photo after a sleep takes ~50 s, later ones ~4 s.

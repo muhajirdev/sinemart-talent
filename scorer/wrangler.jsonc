@@ -24,7 +24,9 @@
       // Model 1 + Model 6 weights (~2 GB) need ~4 GB of memory; 2 vCPU keeps
       // one photo to a few seconds.
       "instance_type": { "vcpu": 2, "memory_mib": 6144, "disk_mb": 12000 },
-      "max_instances": 2
+      "max_instances": 2,
+      // The container's own logs (start-up failures) in Workers Logs.
+      "observability": { "enabled": true }
     }
   ],
   "durable_objects": { "bindings": [{ "name": "SCORER", "class_name": "ScorerContainer" }] },

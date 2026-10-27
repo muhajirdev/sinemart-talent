@@ -14,7 +14,8 @@ or a reloaded model never needs a new image.
 
 Photos are kept in memory only: nothing is written to disk or logged.
 
-    python server.py --prep    # at image build: download weights, cache text prompts
+    python server.py --prep [KEY]  # at image build: download weights (one model, or all),
+                                   # cache the gender prompts
     python server.py           # serve on :8080
 """
 
@@ -42,9 +43,11 @@ MAX_BYTES = 20 * 1024 * 1024
 state: dict = {"ready": False}
 
 
-def prep() -> None:
-    """Image build step: fetch every model's weights and cache the gender
-    prompts, so the running container needs no internet."""
+def prep(only: str | None = None) -> None:
+    """Image build step: fetch the models' weights and cache the gender
+    prompts, so the running container needs no internet. One model per
+    Docker layer keeps each layer under ~2 GB: the registry timed out
+    committing a single 3.25 GB layer (2026-10-27)."""
     import cv2  # noqa: F401 - fail the build, not the running box, if a library is missing
     import mediapipe  # noqa: F401
 
@@ -52,8 +55,12 @@ def prep() -> None:
     from sinemart.embed import load
     from sinemart.gender import PROMPTS
 
-    for name in KEYS.values():
-        load(name)
+    for key, name in KEYS.items():
+        if only in (None, key):
+            load(name)
+    if only not in (None, "m1"):
+        print("prepared", only)
+        return
     import torch
     from transformers import AutoModel, AutoProcessor
 
@@ -68,7 +75,7 @@ def prep() -> None:
             t = t if isinstance(t, torch.Tensor) else t.pooler_output
             out[g] = torch.nn.functional.normalize(t.float(), dim=-1).numpy()
     np.savez(os.path.join(MODELS_DIR, "gender_text.npz"), **out)
-    print("prepared", ", ".join(KEYS.values()))
+    print("prepared", only or ", ".join(KEYS))
 
 
 def warm() -> None:
@@ -166,7 +173,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     if "--prep" in sys.argv:
-        prep()
+        rest = sys.argv[sys.argv.index("--prep") + 1:]
+        prep(rest[0] if rest else None)
         sys.exit()
     server = ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), Handler)
     threading.Thread(target=warm, daemon=True).start()  # answer /health while the models load

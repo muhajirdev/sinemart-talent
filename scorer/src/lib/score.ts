@@ -63,7 +63,7 @@ async function taste(key: Key): Promise<Taste> {
   const cached = tastes.get(key)
   if (cached) return cached
   const obj = await env.IMAGES.get(`models/${key}/taste.json`)
-  if (!obj) throw new Error(`no taste space for ${key}`)
+  if (!obj) throw new Error(`Model ${key.slice(1)} belum siap dipakai di sini.`)
   const t = (await obj.json()) as Taste
   tastes.set(key, t)
   return t
@@ -79,7 +79,7 @@ async function liveModel(key: Key, gender: 'f' | 'm') {
     key === 'm1'
       ? await env.DB.prepare('SELECT params_line FROM model WHERE id = 1').first<{ params_line: string | null }>()
       : await env.DB.prepare('SELECT params_line FROM alt_models WHERE key = ?1').bind(key).first<{ params_line: string | null }>()
-  if (!row?.params_line) throw new Error(`${key} is not trained yet`)
+  if (!row?.params_line) throw new Error(`Model ${key.slice(1)} belum dilatih.`)
   const w = (JSON.parse(row.params_line) as { w: number[] }).w
   const { results } =
     key === 'm1'
@@ -101,18 +101,20 @@ function average(vectors: number[][]) {
   return sum.map((x) => x / norm)
 }
 
-// The container wakes with the models still loading: wait for it.
+// The container wakes with the models still loading (our server answers
+// 503), and right after a deploy Cloudflare may not have started it at all
+// (other 5xx, not from our server): wait for both. An error our server
+// reports (JSON) is real: stop.
 async function embed(photo: ArrayBuffer): Promise<Embedded> {
   const box = getContainer(env.SCORER, 'main')
   for (let attempt = 0; attempt < 90; attempt++) {
     const r = await box.fetch('http://container/embed', { method: 'POST', body: photo })
-    if (r.status !== 503) {
-      if (!r.ok) throw new Error(`scoring failed (${r.status})`)
-      return (await r.json()) as Embedded
-    }
+    if (r.ok) return (await r.json()) as Embedded
+    const ours = r.headers.get('content-type')?.includes('application/json') && r.status !== 503
+    if (ours || r.status < 500) throw new Error(`Gagal menilai foto (${r.status}).`)
     await new Promise((ok) => setTimeout(ok, 2000))
   }
-  throw new Error('the scorer is still starting; try again in a minute')
+  throw new Error('Penilai masih menyala. Coba lagi sebentar lagi.')
 }
 
 export async function scorePhotos(photos: ArrayBuffer[], gender: 'f' | 'm' | 'auto'): Promise<ScoreResult> {

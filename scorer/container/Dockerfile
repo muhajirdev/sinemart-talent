@@ -3,7 +3,10 @@
 # pipeline/sinemart: scorer/wrangler.jsonc sets image_build_context to "..".
 # Versions pinned to the ones that embedded the live applicants
 # (2026-10-27), so a photo scored here gets the pipeline's exact numbers.
-FROM python:3.13-slim
+# The same official image is mirrored at mirror.gcr.io/library/python
+# (pass --build-arg BASE=... when Docker Hub rate-limits).
+ARG BASE=python:3.13-slim
+FROM ${BASE}
 
 # Behind an HTTPS proxy that re-signs traffic, pass its CA only for the build:
 #   docker build --secret id=ca,src=<ca.crt> ...
@@ -34,10 +37,14 @@ RUN --mount=type=secret,id=ca,required=false \
 
 COPY pipeline/sinemart /app/pipeline/sinemart
 COPY scorer/container/server.py /app/server.py
-# Weights are baked in: the running container has no internet.
+# Weights are baked in, one model per layer (the registry can't take one
+# 3 GB layer): the running container has no internet.
 RUN --mount=type=secret,id=ca,required=false \
     if [ -f $CA ]; then export SSL_CERT_FILE=$CA REQUESTS_CA_BUNDLE=$CA; fi \
-    && python server.py --prep
+    && python server.py --prep m1
+RUN --mount=type=secret,id=ca,required=false \
+    if [ -f $CA ]; then export SSL_CERT_FILE=$CA REQUESTS_CA_BUNDLE=$CA; fi \
+    && python server.py --prep m6
 ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
 EXPOSE 8080
