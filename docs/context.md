@@ -4,6 +4,8 @@ Read this before changing anything. It is the memory of the project: the goal,
 how the model works, every decision Muajir (the owner) has made and why, where
 the data comes from, and where things stand. How-tos are in
 [howto.md](./howto.md).
+Every step of the pipeline in detail (crop rules, taste space, scoring maths,
+battle choice, held-out check, tables) is in [pipeline.md](./pipeline.md).
 
 ## The goal
 
