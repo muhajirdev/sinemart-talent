@@ -223,20 +223,22 @@
     $("msg").hidden = true;
   }
 
-  const state = { d: null, mean: 0, filter: "all", map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 }, gender: "f", pg: [], mode: "line" };
-  // The view lives in the URL (?gender=m&model=m3:one&rater=Siska&cluster=4),
+  const state = { d: null, mean: 0, filter: "all", fresh: false, map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 }, gender: "f", pg: [], mode: "line" };
+  // The view lives in the URL (?gender=m&model=m3:one&rater=Siska&cluster=4&battles=none),
   // so a refresh or a shared link opens the same view. Defaults are left out.
   const qs = new URLSearchParams(location.search);
   if (["f", "m"].includes(qs.get("gender"))) state.gender = qs.get("gender");
   if (qs.get("model")) state.mode = qs.get("model");
   if (qs.get("rater")) state.rater = qs.get("rater");
   if (qs.get("cluster")) state.filter = qs.get("cluster");
+  state.fresh = qs.get("battles") === "none";
   function saveUrl() {
     const p = new URLSearchParams();
     if (state.gender !== "f") p.set("gender", state.gender);
     if (state.mode !== "line") p.set("model", state.mode);
     if (state.rater) p.set("rater", state.rater);
     if (state.filter !== "all") p.set("cluster", state.filter);
+    if (state.fresh) p.set("battles", "none");
     history.replaceState(null, "", location.pathname + (p.size ? "?" + p : ""));
   }
   // Hills are numbered and coloured within their group (cewek / cowok).
@@ -292,13 +294,19 @@
     $("boardTitle").hidden = false;
     $("chips").innerHTML = [["all", "All"], ...hills.map((k) => [String(k), hn(k)])]
       .map(([v, label]) => `<button data-f="${v}" aria-pressed="${state.filter === v}">${label}</button>`).join("");
-    $("chips").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.filter = b.dataset.f; saveUrl(); renderBoard(); }));
-    const list = d.faces.filter((f) => state.filter === "all" || String(f.look) === state.filter);
+    // "No battles yet": people nobody has picked for or against so far (in
+    // this group, noise already left out), on top of the cluster chosen.
+    const inCluster = d.faces.filter((f) => state.filter === "all" || String(f.look) === state.filter);
+    const fresh = inCluster.filter((f) => !f.games).length;
+    $("chips").innerHTML += `<button data-fresh aria-pressed="${state.fresh}" style="margin-left:auto">No battles yet (${fresh})</button>`;
+    $("chips").querySelectorAll("button[data-f]").forEach((b) => (b.onclick = () => { state.filter = b.dataset.f; saveUrl(); renderBoard(); }));
+    $("chips").querySelector("button[data-fresh]").onclick = () => { state.fresh = !state.fresh; saveUrl(); renderBoard(); };
+    const list = state.fresh ? inCluster.filter((f) => !f.games) : inCluster;
     renderContrast(list);
     $("faces").innerHTML = list.map((f, i) => {
       const beat = beatOf(f);
       return `<li id="f${f.id}">
-        <div class="rank">${f.score == null ? "–" : i + 1}</div>
+        <div class="rank">${f.score == null ? "–" : state.fresh ? inCluster.indexOf(f) + 1 : i + 1}</div>
         <img src="/img/${f.id}?t=${encodeURIComponent(token)}" alt="Applicant ${f.id}" loading="lazy"
           data-id="${f.id}" data-photos="${f.n_photos || 0}" data-v="0" ${f.n_photos ? 'style="cursor:pointer" title="Tap for their other photos"' : ""}>
         <div>
