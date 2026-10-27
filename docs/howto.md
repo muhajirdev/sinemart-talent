@@ -1,7 +1,8 @@
 # How-tos
 
 Every task you are likely to need, with the gotchas that bit us. Background
-and decisions are in [context.md](./context.md).
+and decisions are in [context.md](./context.md); how each step works is in
+[pipeline.md](./pipeline.md).
 
 - [Setup](#setup)
 - [Deploy the Worker](#deploy-the-worker)

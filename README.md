@@ -13,6 +13,7 @@ look closely only at the top few hundred.
 | Read | For |
 |---|---|
 | [docs/context.md](docs/context.md) | The goal, how the model works, every decision and why, the data and its rules, current status and open items |
+| [docs/pipeline.md](docs/pipeline.md) | The whole pipeline end to end: data in, face crops, embeddings, gender, golden ratio, face parts, picks, the straight-line scorer, battles, comparison models, retraining, the Lab, D1/R2 |
 | [docs/howto.md](docs/howto.md) | Deploy, query the live data, retrain, mark bad photos and duplicates, load new applicants, add a model, tests |
 | [AGENTS.md](AGENTS.md) | Rules for anyone (human or AI agent) changing this repo |
 

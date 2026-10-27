@@ -1,7 +1,7 @@
 # Rules for agents (and humans) working in this repo
 
 Read [docs/context.md](docs/context.md) first; how-tos are in
-[docs/howto.md](docs/howto.md). The owner is Muajir (GitHub `muhajirdev`); he
+[docs/howto.md](docs/howto.md); how every pipeline step works is in [docs/pipeline.md](docs/pipeline.md). The owner is Muajir (GitHub `muhajirdev`); he
 often writes Indonesian, so reply in the language he uses.
 
 ## Never
