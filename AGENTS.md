@@ -26,9 +26,9 @@ often writes Indonesian, so reply in the language he uses.
   not deploy.
 - Bulk D1 writes on live data (marking duplicates, moving picks, reloading a
   model, schema changes).
-- Changing what ranks or picks battles (the straight line, Model 1). The rule:
-  switch only if another model beats the line by >5 points held-out at
-  ~1,000 picks.
+- Changing what ranks or picks battles (the straight line on Model 6 since
+  2026-10-27, `RANKER` in `worker/src/retrain.ts`). The rule: switch only if
+  another model beats it by >5 points held-out.
 - New pages, buttons, steps or flows. Propose them before building; confirm
   your reading of his idea against his actual words.
 

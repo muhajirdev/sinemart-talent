@@ -221,7 +221,7 @@ summed and re-normalised to unit length. One odd photo then moves the
 person's position less, and people with a 2026 grid of 4–6 faces get a
 steadier vector.
 
-Model 1, the one that ranks, is **SigLIP 2 base**
+Model 1, the main taste space (it ranked until 2026-10-27; Model 6 ranks now), is **SigLIP 2 base**
 (`google/siglip2-base-patch16-224`, 768 numbers). The `MODELS` dict also
 holds the comparison models (section 11). ArcFace is the odd one out: it
 expects its own 112×112 face template, so `ARCFACE_BOX` cuts the matching
@@ -504,12 +504,12 @@ vector for get their gender's average. The Lab shows them only as
 
 | Lab name | Key | Embedding | Notes |
 |---|---|---|---|
-| Model 1 | (main) | SigLIP 2 base, 768 | the ranker |
+| Model 1 | (main) | SigLIP 2 base, 768 | the ranker until 2026-10-27; its hills name the clusters |
 | Model 2 | `m2` | DINOv2 base | stand-in for DINOv3, which is gated |
 | Model 3 | `m3` | FaRL (face CLIP, LAION-Face) | research / non-commercial weights |
 | Model 4 | `m4` | ArcFace (InsightFace buffalo_l) | face *recognition*; non-commercial weights |
 | Model 5 | `m5` | SigLIP 2 so400m | larger SigLIP 2 |
-| Model 6 | `m6` | OpenAI CLIP ViT-L/14 | |
+| Model 6 | `m6` | OpenAI CLIP ViT-L/14 | the ranker since 2026-10-27 (`RANKER` in `worker/src/retrain.ts`) |
 | Model 7 | `m7` | PE-Core-L-14-336 | |
 | Model 8 | `m8` | face parts on SigLIP 2 base, 3,072 | section 7 |
 | Golden ratio · straightened | `geo` | fixed rule | section 6 |
@@ -672,7 +672,7 @@ and FaRL ~8. If that holds:
 | Embedding | the vector a frozen image model gives a crop; per person, the average |
 | Taste space | 16 whitened principal directions of the embeddings; each person's `z` |
 | Look / cluster / hill | a k-means group of similar faces within one gender |
-| Straight line / Arrow | Model 1's ranker, score = `w · z` |
+| Straight line / Arrow | the ranker (on Model 6 since 2026-10-27), score = `w · z` |
 | Decided pick | winner, tie or neither (not a skip) |
 | Held-out agreement | share of decisive picks about unseen people the model orders right |
 | Repeat | a pair re-asked of the same rater with sides swapped, not trained, used for the ceiling |
