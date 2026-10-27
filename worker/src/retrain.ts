@@ -268,10 +268,26 @@ export async function raterAgreement(env: Env) {
   const team = await env.DB.prepare("SELECT params_line FROM model WHERE id = 1").first<{ params_line: string | null }>();
   const teamModel = team?.params_line ? arrowFrom(JSON.parse(team.params_line)) : null;
   const teamScores = teamModel ? all.Z.map((z) => teamModel.score(z)) : null;
-  const names = [...new Set(all.picks.map((p) => p.rater))].sort();
+  // What each rater answered, skips and "neither" included, and how fast
+  // (2026-10-27: one rater answered "neither" 1,363 times in 34 minutes,
+  // ~1 s each, invisible in a table that only counted winners).
+  const { results: answered } = await env.DB.prepare(
+    `SELECT rater, SUM(winner_id IS NOT NULL) AS winners, SUM(tie) AS ties, SUM(neither) AS neither,
+       SUM(winner_id IS NULL AND tie = 0 AND neither = 0) AS skips FROM picks GROUP BY rater`,
+  ).all<{ rater: string; winners: number; ties: number; neither: number; skips: number }>();
+  const { results: times } = await env.DB.prepare(
+    `SELECT rater, ms FROM picks WHERE ms IS NOT NULL AND (winner_id IS NOT NULL OR tie = 1 OR neither = 1) ORDER BY rater, ms`,
+  ).all<{ rater: string; ms: number }>();
+  const median = (n: string) => {
+    const ms = times.filter((t) => t.rater === n).map((t) => t.ms);
+    return ms.length ? ms[Math.floor(ms.length / 2)] : null;
+  };
+  const counts = new Map(answered.map(({ rater, ...c }) => [rater, c]));
+  const names = [...new Set([...all.picks.map((p) => p.rater), ...answered.map((a) => a.rater)])].sort();
   const byRater = new Map(names.map((n) => [n, all.picks.filter((p) => p.rater === n)]));
   const models = new Map<string, number[] | null>();
   for (const n of names) {
+    if (!byRater.get(n)!.length) { models.set(n, null); continue; } // only skips or "neither"
     const m = await raterModel(env, n);
     models.set(n, m?.hills ? all.Z.map((z, i) => m.hills!.score(z, all.G[i])) : null);
   }
@@ -280,6 +296,8 @@ export async function raterAgreement(env: Env) {
     picks: byRater.get(n)!.length,
     team: teamScores ? agreement(teamScores, byRater.get(n)!) : null,
     own_model: models.get(n) !== null,
+    answers: counts.get(n) ?? { winners: 0, ties: 0, neither: 0, skips: 0 },
+    median_ms: median(n),
   }));
   const cross = names.flatMap((a) =>
     names.filter((b) => b !== a && models.get(a)).map((b) => ({

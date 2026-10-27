@@ -190,7 +190,7 @@
     $("model").innerHTML = `
       <div class="stats">
         <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "line" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, straight line)"} · ${isRule(m.mode, m.alternates) ? `face proportions, symmetry and averageness${m.mode === "geo_raw" ? " measured on the photos as they are" : " measured with faces straightened"}; no clusters` : state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
-        <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.neithers || 0} "keduanya kurang menarik", ${p.total - p.decided} skipped)</span></div>
+        <div class="stat"><b>${p.decided - (p.neithers || 0)}</b><span>comparisons by ${p.raters} rater${p.raters === 1 ? "" : "s"} (one face picked, or ${p.ties || 0} "sama saja"); plus ${p.neithers || 0} "keduanya kurang menarik" and ${p.total - p.decided} skipped</span></div>
         <div class="stat"><b>${pct(m.heldout_line)}</b><span>Model 1 straight line: held-out agreement</span></div>
         <div class="stat" id="ceil"><b>–</b><span>Raters repeating their own pick (no repeats yet)</span></div>
       </div>
@@ -201,7 +201,7 @@
           <td colspan="3">${pct(a.heldout_fixed)} <span style="color:var(--muted)">(fixed rule, not trained on picks)</span></td></tr>`).join("")}
       </tbody></table>
       <p class="note">${trained
-        ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
+        ? `Trained on ${m.n_picks} answers (comparisons plus "keduanya kurang menarik") at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
         : "Learning starts after 5 picks."}
         Retrains by itself every ${m.retrain_every} picks${trained ? ` (next in ${toNext})` : ""}.</p>
       <p class="note">Score = how often (0–100) this person would win against an average applicant in the same group.
@@ -608,12 +608,19 @@
     if ($("ceil") && a.repeat?.n) $("ceil").innerHTML = `<b>${pct(a.repeat.same)}</b><span>raters repeat their own pick
       (${a.repeat.n} repeat${a.repeat.n === 1 ? "" : "s"}): the most any model can reach</span>`;
     const cell = (x, n) => (x == null ? "–" : `${pct(x)}<span class="meta"> /${n}</span>`);
+    // Everything a rater answered and how fast: a run of 1-second "neither"
+    // answers says little about taste but still trains the "no" line.
+    const answers = (r) => {
+      const c = r.answers || {}, s = r.median_ms == null ? null : r.median_ms / 1000;
+      return `<div style="white-space:nowrap">${c.winners || 0} picked<br>${c.ties || 0} sama saja<br>${c.neither || 0} neither<br>${c.skips || 0} skipped`
+        + (s == null ? "" : `<br><span class="meta"${s < 1.5 ? ' style="color:var(--accent)" title="Very fast answers: check these were real judgements"' : ""}>${s.toFixed(1)} s each</span>`) + "</div>";
+    };
     const cross = new Map(a.cross.map((c) => [`${c.model}|${c.picks_of}`, c]));
     $("agree").hidden = false;
     $("agree").innerHTML = `<h2>Rater agreement</h2>
       <div class="scroll"><table>
-        <tr><th>Rater</th><th>Picks</th><th>Team model agrees</th>${names.length > 1 ? names.map((n) => `<th>${esc(n)}'s taste predicts</th>`).join("") : ""}</tr>
-        ${a.raters.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.picks}</td><td>${cell(r.team, r.picks)}</td>
+        <tr><th>Rater</th><th>Answers</th><th>Team model agrees</th>${names.length > 1 ? names.map((n) => `<th>${esc(n)}'s taste predicts</th>`).join("") : ""}</tr>
+        ${a.raters.map((r) => `<tr><td>${esc(r.name)}</td><td>${answers(r)}</td><td>${cell(r.team, r.picks)}</td>
           ${names.length > 1 ? names.map((m) => {
             if (m === r.name) return "<td class='meta'>·</td>";
             const c = cross.get(`${m}|${r.name}`);
@@ -624,7 +631,8 @@
         `${esc(r.name)} picked the same face ${pct(r.same)} of ${r.n}`).join("; ")}.</p>` : ""}
       ${a.same_pair.length ? `<p class="note">Same pair judged twice: ${a.same_pair.map((s) =>
         `${esc(s.a)} &amp; ${esc(s.b)} picked the same face ${pct(s.agree)} of ${s.n}`).join("; ")}.</p>` : ""}
-      <p class="note">Each row is one rater's picks. "Team model agrees" = how many of their picks the all-raters ranking
+      <p class="note">Each row is one rater. "Answers" = everything they answered; the agreement columns use only answers
+        with a picked face (the "/N" after each %). "Team model agrees" = how many of their picks the all-raters ranking
         gets right (it learned from them, so this runs high). "X's taste predicts" = how many of that row's picks X's
         personal model gets right. 50% is a coin flip; near 100% means the two see beauty the same way.
         ${names.length < 2 ? "A second rater is needed to compare people." : ""}</p>`;
