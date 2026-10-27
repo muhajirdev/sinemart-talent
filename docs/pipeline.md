@@ -112,6 +112,17 @@ from 2021, 651 from 2026).
   image), so 2026 photos are cropped with `--grid` (section 2).
 - Result: 651 people with at least one usable face.
 
+### "bc" test batch (2026-10-27)
+
+394 photos from an Instagram showcase account (one girl per post, carousel
+photos `_1`, `_2`…), R2 bucket `talent-applicant`, prefix `bc/` (expandra
+account), copied to `sinemart-talent/bc/`. One applicant per post, ids
+`900000 + post number` (by date), `stage = 'bc'`. Cropped without `--grid`;
+201 of 259 posts have a usable face (three crops of the account's cartoon
+logo were dropped by hand). They are a **model test only**: projected into
+the live taste space with `sinemart.project` (not re-published) and marked
+`noise = 'bc'`, so they never enter battles, training or leaderboards.
+
 ### Noise and duplicates
 
 Nothing is deleted. A bad person is marked in `applicants.noise` (the

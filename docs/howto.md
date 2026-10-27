@@ -10,6 +10,7 @@ and decisions are in [context.md](./context.md); how each step works is in
 - [Retrain](#retrain)
 - [Mark bad photos and duplicates](#mark-bad-photos-and-duplicates)
 - [Load new applicants](#load-new-applicants)
+- [Test the model on a batch outside the picks](#test-the-model-on-a-batch-outside-the-picks)
 - [Add a comparison model](#add-a-comparison-model)
 - [Golden ratio and face parts](#golden-ratio-and-face-parts)
 - [Change the schema](#change-the-schema)
@@ -202,6 +203,35 @@ Gotchas:
 - Outside labels (like the 2026 shortlist) go into `outside_labels`
   (`applicant_id, source, label`) and show only as aggregates in `/api/check`.
   Never show them to raters.
+
+## Test the model on a batch outside the picks
+
+For a batch that should be scored but never picked (the "bc" showcase
+photos, 2026-10-27). It keeps the live taste space and every score as they
+are; re-publishing would refit both.
+
+1. Crop the batch with its own id range (bc: `900000 + post number`) and
+   `stage`, embed it and guess gender (steps 1–2 above).
+2. Re-make the live taste space: download the live crops from R2 `crops/`
+   (skip the old plain `<id>.jpg` files; the live load used only
+   `<id>-<kind>.jpg`), embed them with the same model, export
+   `SELECT id, z FROM applicants` as JSON, then
+   `python -m sinemart.project live.npz batch.npz live_z.json batch_z.json`.
+   It must report max |dz| ≈ 0; otherwise the crops don't match the load.
+3. Score = `w · z` with `w` from `model.params_line` (the Lab shows
+   `sigmoid(score − gender mean)` as 0–100).
+4. Upload the crops to R2 `crops/` and insert `applicants` rows with
+   `noise = '<tag>'` and `stage = '<tag>'`: noise keeps them out of battles,
+   training, leaderboards and the map. They do show in the Lab's "Marked as
+   bad photos" list; don't press Restore on them.
+5. For a comparison model, the same with `alt_z WHERE key = 'mN'` and its
+   `params_line`; insert `alt_z` rows for the batch (retrain ignores ids
+   that aren't in training).
+
+Gotchas: retrains never touch noise rows, so a batch's `score` is from the
+model at load time; re-score by hand to compare later. `sinemart.publish`
+deletes every applicant not in its load, so a re-publish removes the batch
+(re-run step 2 onwards afterwards).
 
 ## Add a comparison model
 
