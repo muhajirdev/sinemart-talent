@@ -238,7 +238,7 @@
       <div class="stats">
         <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "line" || !m.mode ? "shown here, and picks the battles" : `shown here (battles use ${rankerName(m.alternates)}, straight line)`} · ${isRule(m.mode, m.alternates) ? `face proportions, symmetry and averageness${m.mode === "geo_raw" ? " measured on the photos as they are" : " measured with faces straightened"}; no clusters` : state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
         <div class="stat"><b>${p.decided - (p.neithers || 0)}</b><span>comparisons by ${p.raters} rater${p.raters === 1 ? "" : "s"} (one face picked, or ${p.ties || 0} "sama saja"); plus ${p.neithers || 0} "keduanya kurang menarik" and ${p.total - p.decided} skipped</span></div>
-        <div class="stat"><b>${pct(state.ranker === "m1" ? m.heldout_line : (m.alternates || []).find((a) => a.key === state.ranker)?.heldout_line)}</b><span>${rankerName(m.alternates)} straight line (ranks everyone, picks the battles): held-out agreement</span></div>
+        <div class="stat"><b>${pct(m.full_ranker ? m.heldout_ranker : state.ranker === "m1" ? m.heldout_line : (m.alternates || []).find((a) => a.key === state.ranker)?.heldout_line)}</b><span>${rankerName(m.alternates)} ${m.full_ranker ? "full size + per-face correction" : "straight line"} (ranks everyone, picks the battles): held-out agreement</span></div>
         <div class="stat" id="ceil"><b>–</b><span>Raters repeating their own pick (no repeats yet)</span></div>
       </div>
       ${m.without ? `<div class="card" style="background:#3a3320;margin:12px 0 0;padding:10px 12px">
@@ -248,7 +248,8 @@
         <b>${pct(m.without.heldout_without)}</b> without. Under ~5 points is noise. Battles and the live ranking don't change.</div>` : ""}
       <table class="cmp"><thead><tr><th>Held-out agreement</th><th>Straight line</th><th>Many clusters</th><th>One cluster</th></tr></thead><tbody>
         ${[["Model 1", m.heldout_line, m.heldout_hills, m.heldout_one, "m1"], ...(m.alternates || []).filter((a) => a.has_z).map((a) => [altName(a.key, m.alternates), a.heldout_line, a.heldout, a.heldout_one, a.key])]
-          .map(([n, l, a, b, k]) => [k === state.ranker ? `${n} (ranks)` : n, l, a, b])
+          .map(([n, l, a, b, k]) => [k === state.ranker && !m.full_ranker ? `${n} (ranks)` : n, l, a, b])
+          .concat(m.full_ranker ? [[`${rankerName(m.alternates)} full size + per-face correction (ranks)`, m.heldout_ranker, null, null]] : [])
           .map(([n, l, a, b]) => `<tr><td>${n}</td><td>${pct(l)}</td><td>${pct(a)}</td><td>${pct(b)}</td></tr>`).join("")}
         ${(m.alternates || []).filter((a) => a.has_fixed).map((a) => `<tr><td>${a.has_z ? altName(a.key, m.alternates) + " fixed rule" : altName(a.key, m.alternates)}</td>
           <td colspan="3">${pct(a.heldout_fixed)} <span style="color:var(--muted)">(fixed rule, not trained on picks)</span></td></tr>`).join("")}
@@ -326,7 +327,8 @@
   // ("line" mode); 2026-10-27 Model 6, before that Model 1.
   const rankerKey = () => (state.ranker === "m1" ? "1" : state.ranker);
   const rankerName = (alts) => (state.ranker === "m1" ? "Model 1" : altName(state.ranker, alts));
-  const modeName = (mode, alts) => !mode || mode === "line" ? `${rankerName(alts)} · straight line`
+  // 2026-10-28: the ranker's line is on its full-size numbers plus a per-face correction.
+  const modeName = (mode, alts) => !mode || mode === "line" ? `${rankerName(alts)} · ${state.full ? "full size" : "straight line"}`
     : mode === "1:line" ? "Model 1 · straight line"
     : mode === "one" ? "Model 1 · one cluster"
     : mode === "hills" ? "Model 1 · many clusters"
@@ -859,6 +861,7 @@
     const data = await r.json();
     state.pg = data.model?.peak_gender || [];
     state.ranker = data.model?.ranker || "m1";
+    state.full = !!data.model?.full_ranker;
     state.alts = data.model?.alternates;
     renderModes(data.model?.alternates);
     // One group at a time: scores only compare within cewek or within cowok.

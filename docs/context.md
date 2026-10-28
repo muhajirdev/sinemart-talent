@@ -36,8 +36,16 @@ team A/B picks (picking page ► Worker ► D1 picks)
   as a half win), "Keduanya kurang menarik" (neither: both are a clear no),
   "Lewati" (skip, not trained) and "↶ Batalkan" (undo the last answer within
   30 minutes).
-- **The ranker is a straight line** (Bradley–Terry) **on Model 6** (since
-  2026-10-27; `RANKER` in `worker/src/retrain.ts`):
+- **The ranker is a straight line on Model 6's full-size numbers plus a
+  per-face correction** (since 2026-10-28; `worker/src/full.ts`, class
+  `FullLine`): score = w·x + b, where x is the person's full 768-number
+  Model 6 vector (D1 `full_z`) and b a small correction learned from that
+  face's own battles (0 for faces with none). Only winners and ties train it;
+  "neither" answers then place each gender's "no" line `tau`. Bootstrap
+  spread of 3 fits gives `score_std`. If `full_z` doesn't cover everyone it
+  falls back to the 16-number line below.
+- **Before that, a straight line** (Bradley–Terry) **on Model 6** (2026-10-27
+  to 10-28; `RANKER` in `worker/src/retrain.ts`):
   P(a beats b) = sigmoid(w·z(a) − w·z(b)), fitted on every pick from every
   rater (`worker/src/hills.ts`, class `Arrow`) in Model 6's taste space. "Neither" picks teach a
   per-gender "no" line `tau`: both faces should score below it. The spread of
@@ -102,6 +110,7 @@ team A/B picks (picking page ► Worker ► D1 picks)
 | 2026-10-28 | Lab: tapping a person opens a **right-side panel** (photos, score, battle history; full width on phones) instead of a full-screen view; tapping a rater's name opens their **pick history** there (`/api/rater-picks`). **Rater agreement** is collapsed by default. **Raters checklist** on the ranker view: untick raters to preview the ranking and held-out accuracy without their answers (`/api/results?without=`); a preview only, never saved, battles untouched. | Muajir: "on click talent there, open on right sidebar", "option to exclude a rater, I wanna see if anyone introduced lots of noise", "it should be like a checklist instead". |
 | 2026-10-28 | "Taste of" works with every model and shape (default straight line on Model 1, like the team view). The agreement table still uses each rater's many-clusters model. | Muajir asked to compare raters on any model. |
 | 2026-10-28 | Side panel slides in/out and the page glides aside (no jump), and its width is drag-resizable (remembered per device). **Elo** per person from wins/losses only (start 1500, K 32, "sama saja" = draw, "neither"/skips/repeats ignored; respects the Raters checklist; in "Taste of" only that rater's picks); leaderboard can sort by Elo (`?sort=elo`). | Muajir: "its patah2 hard to see … animate it", "right sidebar should be resizable", "i also want an elo please (not model prediction), just based on their lost / win". |
+| 2026-10-28 | **Ranker = Model 6 full-size line + per-face correction** (`worker/src/full.ts`, D1 `full_z`, `model.params_ranker` / `heldout_ranker`); "neither" no longer trains the ordering, only the "no" line. Model 6's 16-number line and the other models stay as comparisons; "Taste of", Taste match and the scorer app still use the 16-number line. | Muajir: "keep iterating til you find … significantly higher number", then "Okay deploy it live". Offline, 30 held-out splits at 1,375 comparisons: 74.4% vs 66.6% for the live recipe (16-number line with "neither"); dropping the bottom 50% per gender keeps 98% of the 2026 shortlist (93% before). Steps: "neither" out of the ordering +3.1, full size +2.7, per-face correction +2.0. FaRL in an ensemble gave 75.1 but is non-commercial, so not used. Details `/mnt/project-files/talent/experiments-2026-10-28/RESULTS.md`. |
 | 2026-10-28 | Lab **Taste match** card (collapsed, loads when opened, `/api/taste-match`): each rater with 5+ picks gets their own straight line on the ranker's model (fresh fit on their picks and "neither" only, not cached); every pair scored by how often one's line picks the face the other picked (both ways, pooled; 50% = coin flip, below = clash), plus "same order" (score correlation per group). Matrix ordered so similar raters sit together, "Most alike" / "Most clashing" lists (raters with 30+ picks), diagonal = own 5-fold consistency (flag under 60% as noise). Read-only. | Muajir: "who's taste are bertabrakan and more similar to each other", "the analysis should be shown in the web". |
 
 

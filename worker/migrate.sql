@@ -49,3 +49,13 @@ ALTER TABLE applicants ADD COLUMN source TEXT;
 ALTER TABLE applicants ADD COLUMN test INTEGER NOT NULL DEFAULT 0;
 UPDATE applicants SET source = CASE WHEN id < 200000 THEN '2021' WHEN stage = 'bc' THEN 'bc' ELSE '2026' END;
 UPDATE applicants SET test = 1, noise = NULL WHERE stage = 'bc' AND noise = 'bc';
+
+-- 2026-10-28: the ranker is a line on full-size vectors plus a per-face correction.
+CREATE TABLE IF NOT EXISTS full_z (
+  key          TEXT NOT NULL,
+  applicant_id INTEGER NOT NULL,
+  z            TEXT NOT NULL,
+  PRIMARY KEY (key, applicant_id)
+);
+ALTER TABLE model ADD COLUMN params_ranker TEXT;
+ALTER TABLE model ADD COLUMN heldout_ranker REAL;

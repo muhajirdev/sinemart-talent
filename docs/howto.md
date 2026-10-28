@@ -201,6 +201,12 @@ Gotchas:
   in parallel.
 - Every comparison model must be re-run on the new people too
   (see below), or they get their group's average.
+- The ranker needs **full-size vectors** for everyone, or the retrain falls
+  back to the 16-number line: embed with the ranker's model (`clipl` for
+  Model 6), then `python -m sinemart.full ../data/clipl.npz m6 ../data/out`
+  and apply `full_m6.sql` (one INSERT per line, ~20 lines per `--command`
+  chunk: each row is ~6 KB). Keep `full_norm_m6.json`: later additions must
+  use it (`--norm`) so nobody else moves.
 - Outside labels (like the 2026 shortlist) go into `outside_labels`
   (`applicant_id, source, label`) and show only as aggregates in `/api/check`.
   Never show them to raters.
@@ -229,6 +235,10 @@ are; re-publishing would refit both.
 5. For a comparison model, the same with `alt_z WHERE key = 'mN'` and its
    `params_line`; insert `alt_z` rows for the batch (retrain ignores ids
    that aren't in training).
+6. For the ranker, `python -m sinemart.full batch.npz m6 out --norm
+   full_norm_m6.json` and apply `full_m6.sql`: the Lab then scores the batch
+   with the full-size line (no per-face correction, they have no battles).
+   Without these rows test faces show no score.
 
 Gotchas: retrains never touch test rows, so the stored `score` is from the
 model at load time; the Lab re-scores test batches with the current line on

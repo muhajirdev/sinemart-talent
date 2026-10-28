@@ -92,6 +92,8 @@ CREATE TABLE IF NOT EXISTS model (
   n_test        INTEGER,
   split_by      TEXT,                      -- 'applicant' or 'pick'
   n_picks       INTEGER NOT NULL DEFAULT 0,  -- picks the current scores learned from
+  params_ranker TEXT,                        -- the ranker on full_z (src/full.ts): line, per-face corrections, no lines
+  heldout_ranker REAL,                       -- its held-out agreement, same split as the others
   trained_at    TEXT
 );
 
@@ -114,6 +116,15 @@ CREATE TABLE IF NOT EXISTS alt_models (
   trained_at TEXT
 );
 CREATE TABLE IF NOT EXISTS alt_z (
+  key          TEXT NOT NULL,
+  applicant_id INTEGER NOT NULL,
+  z            TEXT NOT NULL,
+  PRIMARY KEY (key, applicant_id)
+);
+-- Full-size vectors (all 768 numbers, centred and scaled, not the 16-number
+-- taste space) for the model that ranks: the ranker's line is fitted on these
+-- since 2026-10-28 (src/full.ts). key = the RANKER key.
+CREATE TABLE IF NOT EXISTS full_z (
   key          TEXT NOT NULL,
   applicant_id INTEGER NOT NULL,
   z            TEXT NOT NULL,

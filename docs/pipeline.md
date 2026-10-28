@@ -410,9 +410,32 @@ the decided count.
 
 ## 9. Scoring: the straight line
 
-`worker/src/hills.ts`, class `Arrow`. This is **Model 1**: it produces every
-score on the leaderboard and picks the battles (decided 2026-10-22, when it
-won the held-out comparison).
+**Since 2026-10-28 the ranker is `FullLine`** (`worker/src/full.ts`): the same
+pairwise model, but on Model 6's full 768 numbers (`full_z`, written by
+`pipeline/sinemart/full.py`: each person's vector minus the applicants'
+average, divided by the spread along the main direction) plus one correction
+`b` per face:
+
+```
+score(person) = w · x(person) + b(person)
+P(a beats b)  = sigmoid(score(a) − score(b))
+```
+
+Fitted with L-BFGS to convergence on winners and ties only, L2 0.003 on `w`
+and 0.3 (per pick) on `b`, so a face with a handful of battles stays close
+to what its photo says. New faces (no battles, test batches) get `b = 0`.
+"Neither" answers don't touch `w` or `b` (offline they cost ~3 points of
+ordering); with the scores fixed they place each gender's "no" line `tau`
+(relative to that gender's average score, same pull to 0). Bootstrap
+`score_std` uses 3 quicker fits (100 iterations). The held-out check fits it
+on the same split as the others (`model.heldout_ranker`). If `full_z` is
+missing anyone, the retrain falls back to the 16-number line below.
+
+The rest of this section describes that 16-number line (`Arrow`), which was
+the ranker before and is still every comparison model's "straight line".
+
+`worker/src/hills.ts`, class `Arrow`. This was **Model 1** at first (decided
+2026-10-22, when it won the held-out comparison), then Model 6 (2026-10-27).
 
 It is a Bradley–Terry model on the taste space:
 

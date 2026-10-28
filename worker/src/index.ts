@@ -4,7 +4,7 @@
 
 import { territory } from "./map";
 import {
-  ANSWERED, MIN_PICKS, RANKER, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, rankerLine, raterAgreement, raterModel, retrain, tasteMatch, withoutRaters,
+  ANSWERED, MIN_PICKS, RANKER, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, rankerScorer, raterAgreement, raterModel, retrain, tasteMatch, withoutRaters,
 } from "./retrain";
 
 export interface Env {
@@ -236,8 +236,8 @@ async function geometryPercentiles(env: Env) {
 async function results(env: Env, who: string | null, mode: string | null = null, without: string[] = []) {
   if (who) return raterResults(env, who, mode);
   const model = await env.DB.prepare(
-    `SELECT active, heldout_hills, heldout_one, heldout_line, n_test, split_by, n_picks, trained_at, init, params, params_one
-     FROM model WHERE id = 1`,
+    `SELECT active, heldout_hills, heldout_one, heldout_line, heldout_ranker, params_ranker IS NOT NULL AS full_ranker,
+       n_test, split_by, n_picks, trained_at, init, params, params_one FROM model WHERE id = 1`,
   ).first<Record<string, unknown>>();
   const oneParams = model?.params_one as string | null, hillsParams = model?.params as string | null;
   const alternates = (await env.DB.prepare(`SELECT key, heldout, heldout_one, heldout_line, heldout_fixed, fixed IS NOT NULL AS has_fixed,
@@ -257,9 +257,9 @@ async function results(env: Env, who: string | null, mode: string | null = null,
   ).all<Record<string, unknown>>();
   // Retrains never touch test faces, so their stored score is from load
   // time: score them with the ranker's current straight line instead.
-  const rl = await rankerLine(env);
+  const rs = await rankerScorer(env);
   for (const f of faces) {
-    if (f.test) { const z = rl?.zs.get(f.id as number); f.score = rl && z ? rl.line.score(z) : null; }
+    if (f.test) f.score = rs ? rs(f.id as number) : null;
     delete f.z;
   }
   let peakGender: (string | null)[] | null = null;
@@ -323,8 +323,7 @@ async function results(env: Env, who: string | null, mode: string | null = null,
     // checklist). Clusters stay as they are; only the scores change.
     const w = await withoutRaters(env, without);
     for (const f of faces) {
-      const z = w?.zs.get(f.id as number);
-      f.score = w?.line && z ? w.line.score(z) : null;
+      f.score = w?.score ? w.score(f.id as number) : null;
       f.score_std = null;
     }
     faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
@@ -594,7 +593,8 @@ export default {
         env.DB.prepare("UPDATE applicants SET score = NULL, score_std = NULL, model = NULL, updated_at = NULL"),
         env.DB.prepare(
           `UPDATE model SET params = NULL, active = NULL, heldout_hills = NULL, heldout_line = NULL, params_line = NULL,
-           params_one = NULL, heldout_one = NULL, n_test = NULL, split_by = NULL, n_picks = 0, trained_at = NULL WHERE id = 1`,
+           params_one = NULL, heldout_one = NULL, n_test = NULL, split_by = NULL, n_picks = 0, trained_at = NULL,
+           params_ranker = NULL, heldout_ranker = NULL WHERE id = 1`,
         ),
         env.DB.prepare(
           "UPDATE alt_models SET params = NULL, heldout = NULL, params_one = NULL, heldout_one = NULL, params_line = NULL, heldout_line = NULL, heldout_fixed = NULL, n_picks = 0, trained_at = NULL",
