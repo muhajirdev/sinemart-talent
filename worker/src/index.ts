@@ -330,6 +330,8 @@ async function results(env: Env, who: string | null, mode: string | null = null,
     faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
     preview = w?.summary ?? null;
   }
+  const elo = await eloRatings(env, { without });
+  for (const f of faces) f.elo = elo.get(f.id as number) ?? null;
   const init = model?.init ? JSON.parse(model.init as string) : null;
   if (model) delete model.init;
   return json({
@@ -366,10 +368,12 @@ async function raterResults(env: Env, who: string, mode: string | null = null) {
     games.set(w, (games.get(w) ?? 0) + 1);
     games.set(l, (games.get(l) ?? 0) + 1);
   }
+  const elo = await eloRatings(env, { only: who });
   const faces = data.faces
     .map((f, i) => ({
       id: f.id,
       score: m.score(i),
+      elo: elo.get(f.id) ?? null,
       score_std: null,
       look: m.hill(i),
       gender: data.G[i],
@@ -444,6 +448,29 @@ async function outsideCheck(env: Env) {
     out.push({ source, people, passed, auc: pairs ? wins / pairs : null, passed_in_top50: inTop, expected_in_top50: expected });
   }
   return out;
+}
+
+// 2026-10-28 (Muajir: "an elo please (not model prediction), just based on
+// their lost / win"). Plain Elo over every answered battle in order: start
+// 1500, K = 32, "sama saja" a draw. Skips, "neither" and repeat battles
+// don't count. Optionally one rater's picks only, or without some raters.
+const ELO_START = 1500, ELO_K = 32;
+async function eloRatings(env: Env, opts: { only?: string; without?: string[] } = {}) {
+  const { results } = await env.DB.prepare(
+    `SELECT rater, left_id, right_id, winner_id FROM picks
+     WHERE (winner_id IS NOT NULL OR tie = 1) AND kind != 'repeat' AND (?1 IS NULL OR rater = ?1) ORDER BY id`,
+  ).bind(opts.only ?? null).all<{ rater: string; left_id: number; right_id: number; winner_id: number | null }>();
+  const drop = new Set(opts.without ?? []);
+  const elo = new Map<number, number>();
+  for (const p of results) {
+    if (drop.has(p.rater)) continue;
+    const a = elo.get(p.left_id) ?? ELO_START, b = elo.get(p.right_id) ?? ELO_START;
+    const expect = 1 / (1 + 10 ** ((b - a) / 400));
+    const got = p.winner_id == null ? 0.5 : p.winner_id === p.left_id ? 1 : 0;
+    elo.set(p.left_id, a + ELO_K * (got - expect));
+    elo.set(p.right_id, b - ELO_K * (got - expect));
+  }
+  return elo;
 }
 
 // Every battle one person was in, newest first: who they faced, how it went

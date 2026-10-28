@@ -76,12 +76,25 @@
   /* 2026-10-28 (Muajir): a person opens in a panel on the right, so the
      leaderboard stays in view and tapping another row just swaps the panel.
      Full width on phones. */
-  .lb { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; width: min(100vw, 460px); background: #161616;
+  :root { --lbw: 460px; }
+  .lb { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; width: min(100vw, var(--lbw)); background: #161616;
     border-left: 1px solid #3a3a3a; box-shadow: -8px 0 24px #0008; display: flex; flex-direction: column;
     align-items: stretch; padding: calc(12px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
-    overflow-y: auto; overscroll-behavior: contain; animation: lbIn .18s ease-out; }
-  @keyframes lbIn { from { transform: translateX(40px); opacity: 0; } }
-  @media (min-width: 1240px) { body.side { margin-right: 476px; margin-left: max(16px, calc((100vw - 476px - 760px) / 2)); } }
+    overflow-y: auto; overscroll-behavior: contain;
+    transform: translateX(105%); visibility: hidden; transition: transform .25s ease, visibility 0s .25s; }
+  .lb.open { transform: none; visibility: visible; transition: transform .25s ease; }
+  /* Wide screens: the page glides left to make room (same speed as the panel)
+     instead of jumping; narrower ones keep it still and the panel floats over. */
+  @media (min-width: 1260px) {
+    body { margin-left: max(16px, calc((100vw - 760px) / 2)); transition: margin-left .25s ease; }
+    body.side { margin-left: max(16px, calc((100vw - var(--lbw) - 16px - 760px) / 2)); }
+  }
+  /* Drag the panel's left edge to resize it (wider screens only). */
+  .lb .grip { position: absolute; left: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
+  .lb .grip:hover, .lb .grip.on { background: #f5c24233; }
+  body.resizing, body.resizing .lb { transition: none; user-select: none; -webkit-user-select: none; }
+  @media (max-width: 600px) { .lb .grip { display: none; } }
+  @media (prefers-reduced-motion: reduce) { .lb, .lb.open, body { transition: none; } }
   #faces li.sel { outline: 2px solid var(--accent); }
   .lb .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
   .lb .top h2 { margin: 0; }
@@ -99,7 +112,6 @@
   .rname { all: unset; cursor: pointer; color: var(--accent); }
   .lb .hist img { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; cursor: pointer; }
   .lb .hist b.won { color: #7bd88f; } .lb .hist b.lost { color: #ff8a80; }
-  .lb[hidden] { display: none; }
   .lb .stage { position: relative; width: 100%; height: min(58vh, 560px); flex: none; display: flex; align-items: center; justify-content: center; background: #0d0d0d; border-radius: 10px; }
   .lb .stage img { width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
   .lb #lbPhi, .lb #lbPhi svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -160,7 +172,8 @@
 <div class="chips" id="srcs"></div>
 <div class="chips" id="chips"></div>
 <ol id="faces"></ol>
-<aside class="lb" id="lb" hidden role="dialog" aria-label="Candidate details">
+<aside class="lb" id="lb" role="dialog" aria-label="Candidate details">
+  <div class="grip" id="lbGrip" title="Drag to resize"></div>
   <div class="top"><h2 id="lbTitle"></h2><button class="close" id="lbClose" aria-label="Close">✕</button></div>
   <div id="lbPerson">
   <div class="stage"><img id="lbImg" alt=""><div id="lbPhi"></div><button class="nav prev" id="lbPrev" aria-label="Previous photo">‹</button>
@@ -234,7 +247,7 @@
         : "Learning starts after 5 picks."}
         Retrains by itself every ${m.retrain_every} picks${trained ? ` (next in ${toNext})` : ""}.</p>
       <p class="note">Score = how often (0–100) this person would win against an average applicant in the same group.
-        "Cluster" = which look's peak they are closest to. Certainty = how settled the score is; it rises as they get more battles.</p>
+        Elo = from wins and losses only, no model: everyone starts at 1500, a win against a stronger face gains more; "sama saja" is a draw; "neither" and skips don't count. "Cluster" = which look's peak they are closest to. Certainty = how settled the score is; it rises as they get more battles.</p>
       <p style="margin:12px 0 0; display:flex; gap:10px; flex-wrap:wrap">
         <button id="retrain">Retrain now</button>
         <button id="reset" class="danger">Reset all scores</button></p>`;
@@ -264,6 +277,8 @@
   if (qs.get("rater")) state.rater = qs.get("rater");
   if (qs.get("cluster")) state.filter = qs.get("cluster");
   state.fresh = qs.get("battles") === "none";
+  // Leaderboard order: the model's score (default) or plain Elo from wins and losses.
+  state.sort = qs.get("sort") === "elo" ? "elo" : "model";
   // Raters unticked in the "Raters:" checklist (a preview, see renderRaterChecks).
   state.without = new Set((qs.get("without") || "").split(",").filter(Boolean));
   // Sources shown on the leaderboard; null = the default (every applicant
@@ -276,6 +291,7 @@
     if (state.rater) p.set("rater", state.rater);
     if (state.filter !== "all") p.set("cluster", state.filter);
     if (state.fresh) p.set("battles", "none");
+    if (state.sort === "elo") p.set("sort", "elo");
     if (state.sources) p.set("sources", [...state.sources].join(","));
     if (state.without.size) p.set("without", [...state.without].join(","));
     history.replaceState(null, "", location.pathname + (p.size ? "?" + p : ""));
@@ -355,9 +371,14 @@
       .map(([v, label]) => `<button data-f="${v}" aria-pressed="${state.filter === v}">${label}</button>`).join("");
     // "No battles yet": people nobody has picked for or against so far (in
     // this group, noise already left out), on top of the cluster chosen.
+    const byElo = state.sort === "elo";
     const inCluster = shown.filter((f) => state.filter === "all" || String(f.look) === state.filter);
+    if (byElo) inCluster.sort((a, b) => (b.elo ?? -Infinity) - (a.elo ?? -Infinity));
     const fresh = inCluster.filter((f) => !f.games).length;
-    $("chips").innerHTML += `<button data-fresh aria-pressed="${state.fresh}" style="margin-left:auto">No battles yet (${fresh})</button>`;
+    $("chips").innerHTML += `<span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+      <button data-sort="model" aria-pressed="${!byElo}">Model score</button><button data-sort="elo" aria-pressed="${byElo}">Elo</button>
+      <button data-fresh aria-pressed="${state.fresh}">No battles yet (${fresh})</button></span>`;
+    $("chips").querySelectorAll("button[data-sort]").forEach((b) => (b.onclick = () => { state.sort = b.dataset.sort; saveUrl(); renderBoard(); }));
     $("chips").querySelectorAll("button[data-f]").forEach((b) => (b.onclick = () => { state.filter = b.dataset.f; saveUrl(); renderBoard(); }));
     $("chips").querySelector("button[data-fresh]").onclick = () => { state.fresh = !state.fresh; saveUrl(); renderBoard(); };
     const list = state.fresh ? inCluster.filter((f) => !f.games) : inCluster;
@@ -365,15 +386,17 @@
     $("faces").innerHTML = list.map((f, i) => {
       const beat = beatOf(f);
       return `<li id="f${f.id}">
-        <div class="rank">${f.score == null ? "–" : state.fresh ? inCluster.indexOf(f) + 1 : i + 1}</div>
+        <div class="rank">${(byElo ? f.elo : f.score) == null ? "–" : state.fresh ? inCluster.indexOf(f) + 1 : i + 1}</div>
         <img src="/img/${f.id}?t=${encodeURIComponent(token)}" alt="Applicant ${f.id}" loading="lazy"
           data-id="${f.id}" data-photos="${f.n_photos || 0}" data-v="0" ${f.n_photos ? 'style="cursor:pointer" title="Tap for their other photos"' : ""}>
         <div>
-          <div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
-          <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>
+          ${byElo ? `<div class="score">${f.elo == null ? "no battles" : `Elo ${Math.round(f.elo)}`}</div>
+          <div class="meta">Model score ${beat == null ? "–" : Math.round(beat * 100)}</div>`
+          : `<div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
+          <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>`}
           <div class="meta">#${f.id}${f.test ? ` · <span class="tag" style="--c:var(--muted)">${esc(f.source)}</span>` : ""} · ${f.look == null ? "no cluster" : `<span class="tag ${hc(f.look)}">${hn(f.look)}</span>`}${f.gender ? ` · ${gname[f.gender]}${f.gender_src === "manual" ? " (fixed)" : ""}
               <button class="gfix" data-id="${f.id}" data-g="${f.gender === "f" ? "m" : "f"}">wrong? move to ${gname[f.gender === "f" ? "m" : "f"]}</button>` : ""}</div>
-          <div class="meta">${battles(f)}${f.n_photos > 1 ? ` · ${f.n_photos} photos` : ""}${certainty(f)}</div>
+          <div class="meta">${battles(f)}${!byElo && f.elo != null ? ` · Elo ${Math.round(f.elo)}` : ""}${f.n_photos > 1 ? ` · ${f.n_photos} photos` : ""}${certainty(f)}</div>
           <div class="meta">${geoLine(f)}</div>
         </div></li>`;
     }).join("");
@@ -427,7 +450,7 @@
     api(`/api/points/${id}`).then((r) => r.json()).then((p) => { if (lb.id === id) { lb.points = p; drawBoxPhi(); } }).catch(() => {});
     // Load every photo now so flipping never waits.
     for (let k = 0; k < lb.n; k++) new Image().src = boxUrl(k);
-    $("lb").hidden = false;
+    $("lb").classList.add("open");
     document.body.classList.add("side");
     markSel();
     $("lb").scrollTop = 0;
@@ -462,7 +485,7 @@
   async function openRater(name) {
     Object.assign(lb, { id: null, rater: name });
     $("lbPerson").hidden = true; $("lbRater").hidden = false;
-    $("lb").hidden = false; document.body.classList.add("side"); markSel();
+    $("lb").classList.add("open"); document.body.classList.add("side"); markSel();
     $("lbTitle").textContent = name;
     $("lbRater").innerHTML = '<p class="label">Loading…</p>';
     $("lb").scrollTop = 0;
@@ -495,7 +518,7 @@
     $("lbDots").innerHTML = lb.n < 2 ? "" : Array.from({ length: lb.n }, (_, k) => `<i class="${k === lb.v ? "on" : ""}"></i>`).join("");
     $("lbTitle").textContent = `#${f.id}`;
     $("lbCap").innerHTML = `${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${lb.rank}`}
-      · ${f.look == null ? "no cluster" : hn(f.look)}<br>${battles(f)}${certainty(f)}<br>${geoLine(f)}
+      · ${f.look == null ? "no cluster" : hn(f.look)}<br>${battles(f)}${f.elo != null ? ` · Elo ${Math.round(f.elo)}` : ""}${certainty(f)}<br>${geoLine(f)}
       <div class="label">${lb.v === 0 ? "Face" : `Photo ${lb.v} of ${lb.n - 1}`}</div>`;
     drawBoxPhi();
   }
@@ -520,7 +543,24 @@
   }
   $("lbPhiBtn").onclick = () => { phiOn = !phiOn; try { localStorage.setItem("phi", phiOn ? "1" : "0"); } catch (_) {} drawBoxPhi(); };
   const flipBox = (step) => { if (lb.n > 1) { lb.v = (lb.v + step + lb.n) % lb.n; showBox(); } };
-  const closeBox = () => { $("lb").hidden = true; lb.id = lb.rater = null; document.body.classList.remove("side"); markSel(); };
+  // Panel width: drag its left edge; remembered on this device.
+  {
+    const setW = (w) => document.documentElement.style.setProperty("--lbw", Math.round(Math.max(320, Math.min(w, innerWidth * 0.9))) + "px");
+    try { const w = Number(localStorage.getItem("lbw")); if (w) setW(w); } catch (_) {}
+    const grip = $("lbGrip");
+    grip.addEventListener("pointerdown", (e) => {
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      grip.classList.add("on"); document.body.classList.add("resizing");
+    });
+    grip.addEventListener("pointermove", (e) => { if (grip.classList.contains("on")) setW(innerWidth - e.clientX); });
+    const end = () => {
+      if (!grip.classList.contains("on")) return;
+      grip.classList.remove("on"); document.body.classList.remove("resizing");
+      try { localStorage.setItem("lbw", parseInt(getComputedStyle(document.documentElement).getPropertyValue("--lbw"))); } catch (_) {}
+    };
+    grip.addEventListener("pointerup", end); grip.addEventListener("pointercancel", end);
+  }
+  const closeBox = () => { $("lb").classList.remove("open"); lb.id = lb.rater = null; document.body.classList.remove("side"); markSel(); };
   // Ring the open person's row on the leaderboard.
   const markSel = () => $("faces").querySelectorAll("li").forEach((li) => li.classList.toggle("sel", li.id === `f${lb.id}`));
   $("lbPrev").onclick = (e) => { e.stopPropagation(); flipBox(-1); };
