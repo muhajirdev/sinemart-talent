@@ -473,3 +473,94 @@ export async function withoutRaters(env: Env, out: string[]) {
     },
   };
 }
+
+// 2026-10-28 (Muajir: "who's taste are bertabrakan and more similar to each
+// other"). Raters almost never judge the very same pair, so each rater gets
+// their own straight line on the ranker's taste space, fitted on their answers
+// only (picks and "neither"), and every pair of raters is compared two ways:
+//   - match: how often A's line picks the face B picked, and B's line A's
+//     (pooled, both directions also given). 50% = coin flip, below = opposite
+//     taste.
+//   - same order: correlation of the two lines' scores over everyone in a
+//     group (cewek, cowok). Below 0 = they rank people the other way round.
+// Each rater's own line is also checked on their own picks (5 folds, each
+// fifth predicted by a line fitted on the rest): a rater nobody can predict,
+// not even themselves, looks unlike everyone, which is noise, not a clash.
+export const TASTE_FOLDS = 5;
+export async function tasteMatch(env: Env) {
+  const loaded = await loadData(env);
+  if (!loaded) return null;
+  let data = loaded;
+  const alt = RANKER === "m1" ? null : await loadAlternate(env, RANKER);
+  if (alt?.zs.size && data.faces.some((f) => !alt.zs.has(f.id))) data = only(data, (f) => alt.zs.has(f.id));
+  const Z = alt?.zs.size ? data.faces.map((f) => alt.zs.get(f.id)!) : data.Z;
+  const { G, picks, below, groupNo } = data;
+  const fit = (pk: Pick[], bl: Below[]) => new Arrow(Z[0].length, groupNo.length).fit(Z, pk, 300, 0.05, 1e-2, bl);
+  const decisive = (pk: Pick[]) => pk.filter((p) => (p.y ?? 1) === 1);
+  const hits = (s: number[], pk: Pick[]) => decisive(pk).filter((p) => s[p.w] > s[p.l]).length;
+  const names = [...new Set(picks.map((p) => p.rater))].sort()
+    .filter((n) => decisive(picks.filter((p) => p.rater === n)).length >= MIN_PICKS);
+  const mine = new Map(names.map((n) => [n, picks.filter((p) => p.rater === n)]));
+  const no = new Map(names.map((n) => [n, below.filter((b) => b.rater === n)]));
+  const scores = new Map(names.map((n) => {
+    const a = fit(mine.get(n)!, no.get(n)!);
+    return [n, Z.map((z) => a.score(z))];
+  }));
+  const repeat = await repeatAgreement(env);
+  const raters = names.map((n) => {
+    const pk = mine.get(n)!, rand = rng(7), fold = pk.map(() => Math.floor(rand() * TASTE_FOLDS));
+    let h = 0, t = 0;
+    for (let k = 0; k < TASTE_FOLDS; k++) {
+      const test = pk.filter((_, i) => fold[i] === k);
+      if (!decisive(test).length) continue;
+      const a = fit(pk.filter((_, i) => fold[i] !== k), no.get(n)!);
+      h += hits(Z.map((z) => a.score(z)), test);
+      t += decisive(test).length;
+    }
+    const r = repeat.raters.find((x) => x.name === n);
+    return { name: n, picks: decisive(pk).length, neither: no.get(n)!.length / 2, self: { n: t, agree: t ? h / t : null },
+      repeat: r?.n ? { n: r.n, same: r.same } : null };
+  });
+  const corr = (x: number[], y: number[]) => {
+    const mx = x.reduce((a, b) => a + b, 0) / x.length, my = y.reduce((a, b) => a + b, 0) / y.length;
+    let sxy = 0, sx = 0, sy = 0;
+    x.forEach((v, i) => { sxy += (v - mx) * (y[i] - my); sx += (v - mx) ** 2; sy += (y[i] - my) ** 2; });
+    return sx && sy ? sxy / Math.sqrt(sx * sy) : null;
+  };
+  const groups = groupNo.map((g) => ({ g, idx: G.map((x, i) => (x === g ? i : -1)).filter((i) => i >= 0) }))
+    .filter((x) => x.idx.length >= 10);
+  const pairs = [];
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      const [a, b] = [names[i], names[j]], sa = scores.get(a)!, sb = scores.get(b)!;
+      const ab = { n: decisive(mine.get(b)!).length, hits: hits(sa, mine.get(b)!) };
+      const ba = { n: decisive(mine.get(a)!).length, hits: hits(sb, mine.get(a)!) };
+      pairs.push({
+        a, b, ab, ba, match: (ab.hits + ba.hits) / (ab.n + ba.n), n: ab.n + ba.n,
+        order: Object.fromEntries(groups.map(({ g, idx }) => [g ?? "?", corr(idx.map((k) => sa[k]), idx.map((k) => sb[k]))])),
+      });
+    }
+  }
+  return { model: RANKER, raters, pairs, order: tasteOrder(names, pairs) };
+}
+
+// Raters in an order that puts similar tastes next to each other: join the
+// two closest groups (average match) until one is left, keeping each group's
+// members together.
+function tasteOrder(names: string[], pairs: { a: string; b: string; match: number }[]) {
+  const sim = new Map(pairs.flatMap((p) => [[`${p.a}|${p.b}`, p.match], [`${p.b}|${p.a}`, p.match]]));
+  let groups = names.map((n) => [n]);
+  while (groups.length > 1) {
+    let best = [0, 1], bestSim = -Infinity;
+    for (let i = 0; i < groups.length; i++) {
+      for (let j = i + 1; j < groups.length; j++) {
+        const s = groups[i].flatMap((x) => groups[j].map((y) => sim.get(`${x}|${y}`)!));
+        const m = s.reduce((x, y) => x + y, 0) / s.length;
+        if (m > bestSim) { bestSim = m; best = [i, j]; }
+      }
+    }
+    const [i, j] = best;
+    groups = [...groups.filter((_, k) => k !== i && k !== j), [...groups[i], ...groups[j]]];
+  }
+  return groups[0] ?? [];
+}

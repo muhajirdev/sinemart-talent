@@ -63,7 +63,13 @@
   .contrast img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #808080; display: block; }
   .contrast figcaption { position: absolute; left: 4px; top: 4px; background: #000b; border-radius: 999px; padding: 0 6px; font-size: 11px; }
   .contrast .low img { outline: 2px solid #ff8a8066; }
-  #mapd summary, #agreed summary { cursor: pointer; }
+  #mapd summary, #agreed summary, #tasted summary { cursor: pointer; }
+  #tasted[open] summary { margin-bottom: 8px; }
+  .tm td, .tm th { text-align: center; padding: 6px 4px; white-space: nowrap; }
+  .tm td:first-child, .tm th:first-child { text-align: left; }
+  .tm .few { color: var(--muted); }
+  .pairs { margin: 4px 0 0; padding-left: 18px; font-size: 14px; line-height: 1.5; }
+  .pairs li { display: list-item; background: none; padding: 0; margin: 0; grid-template-columns: none; }
   #agreed[open] summary { margin-bottom: 8px; }
   #mapd[open] summary { margin-bottom: 8px; }
   select { background: var(--card); color: var(--fg); border: 1px solid #555; border-radius: 10px; padding: 8px 10px; font-size: 15px; max-width: 100%; }
@@ -166,6 +172,11 @@
   </details>
 </section>
 <section id="agree" class="card" hidden></section>
+<section id="taste" class="card">
+  <details id="tasted"><summary><h2 style="display:inline">Taste match</h2></summary>
+    <div id="tastebody"><p class="note">Working it out…</p></div>
+  </details>
+</section>
 <section id="contrast" class="card contrast" hidden></section>
 <section id="noise" class="card" hidden></section>
 <h2 id="boardTitle" hidden>Leaderboard</h2>
@@ -759,6 +770,61 @@
     renderRaterChecks(names);
   }
 
+  // 2026-10-28 (Muajir: "who's taste are bertabrakan and more similar to each
+  // other"). Every rater gets their own straight line; each pair is scored by
+  // how often one's line picks the face the other picked (both ways, pooled).
+  // Loaded only when opened: it fits a line per rater.
+  let taste = null;
+  async function loadTaste() {
+    if (taste) return;
+    taste = api("/api/taste-match").then((r) => r.json());
+    try { renderTaste(await taste); } catch { taste = null; $("tastebody").innerHTML = '<p class="note">Could not load. Close and open again.</p>'; }
+  }
+  const FEW = 30; // decided picks below this: a rough guess of their taste
+  function renderTaste(t) {
+    if (t.raters.length < 2) { $("tastebody").innerHTML = '<p class="note">A second rater is needed to compare tastes.</p>'; return; }
+    const by = new Map(t.raters.map((r) => [r.name, r]));
+    const pair = new Map(t.pairs.flatMap((p) => [[`${p.a}|${p.b}`, p], [`${p.b}|${p.a}`, p]]));
+    const few = (n) => by.get(n).picks < FEW;
+    const ord = (o) => Object.entries(o).filter(([, v]) => v != null).map(([g, v]) => `${gname[g] || g} ${v.toFixed(2)}`).join(", ");
+    // Green above a coin flip, red below; full colour at 80% / 20%.
+    const tint = (x) => {
+      const d = Math.max(-1, Math.min(1, (x - 0.5) / 0.3));
+      return d >= 0 ? `rgba(123,216,143,${(0.6 * d).toFixed(2)})` : `rgba(230,103,103,${(0.75 * -d).toFixed(2)})`;
+    };
+    const line = (p) => `<li><b>${esc(p.a)}</b> &amp; <b>${esc(p.b)}</b>: ${pct(p.match)}
+      <span class="meta">(${esc(p.a)}'s taste gets ${pct(p.ab.hits / p.ab.n)} of ${esc(p.b)}'s ${p.ab.n} picks, ${esc(p.b)}'s gets
+      ${pct(p.ba.hits / p.ba.n)} of ${p.ba.n}; same order: ${ord(p.order)})</span></li>`;
+    const solid = t.pairs.filter((p) => !few(p.a) && !few(p.b)).sort((x, y) => y.match - x.match);
+    const top = solid.slice(0, 5), low = solid.slice(-5).reverse();
+    const head = t.order.map((n) => `<th title="${esc(n)}: ${by.get(n).picks} picks"${few(n) ? ' class="few"' : ""}>${esc(n.length > 9 ? n.slice(0, 8) + "…" : n)}</th>`).join("");
+    const rows = t.order.map((a) => `<tr><td${few(a) ? ' class="few"' : ""}><button class="rname" data-name="${esc(a)}">${esc(a)}</button>
+        <span class="meta">${by.get(a).picks}${few(a) ? " · few" : ""}</span></td>${t.order.map((b) => {
+      if (a === b) {
+        const s = by.get(a).self;
+        return `<td class="meta" title="${esc(a)}'s own line, fitted without each fifth of their picks, gets ${pct(s.agree)} of that fifth (${s.n} picks)"><i>${pct(s.agree)}</i></td>`;
+      }
+      const p = pair.get(`${a}|${b}`), [ab, ba] = p.a === a ? [p.ab, p.ba] : [p.ba, p.ab];
+      return `<td style="background:${tint(p.match)}" title="${esc(a)} & ${esc(b)}: ${pct(p.match)} of ${p.n} picks. ${esc(a)}'s taste gets ${pct(ab.hits / ab.n)} of ${esc(b)}'s picks; ${esc(b)}'s gets ${pct(ba.hits / ba.n)} of ${esc(a)}'s. Same order: ${ord(p.order)}">${pct(p.match)}</td>`;
+    }).join("")}</tr>`).join("");
+    const noisy = t.raters.filter((r) => r.self.agree != null && r.self.agree < 0.6 && r.picks >= FEW);
+    $("tastebody").innerHTML = `
+      <h3 style="font-size:15px;margin:4px 0">Most alike</h3><ul class="pairs">${top.map(line).join("")}</ul>
+      <h3 style="font-size:15px;margin:12px 0 4px">Most clashing</h3><ul class="pairs">${low.map(line).join("")}</ul>
+      <p class="note">Only raters with ${FEW}+ picks are in these two lists.</p>
+      <div class="scroll" style="margin-top:12px"><table class="tm"><tr><th>Rater · picks</th>${head}</tr>${rows}</table></div>
+      ${noisy.length ? `<p class="note">${noisy.map((r) => esc(r.name)).join(", ")}: their own line gets under 60% of their own picks,
+        so they look unlike everyone partly because their picks are hard to predict at all (noise or a taste the model can't see), not only because they clash.</p>` : ""}
+      <p class="note">Each rater gets their own straight line on the model that ranks everyone (${esc(rankerName(state.alts))}), learned from their
+        picks and "neither" answers only. A cell is how often one rater's line picks the face the other rater picked, both ways
+        pooled. 50% = coin flip: no shared taste. Above = alike (greener). Below 50% = they clash: one's taste picks the other face
+        more often than not (red). Raters sit next to the people most like them. The grey diagonal is how well a rater's own line
+        predicts their own unseen picks: about the most anyone can reach for them. "Same order" (hover a cell) compares how the two
+        lines rank everyone in a group: 1 = same order, 0 = unrelated, below 0 = reversed. Raters almost never judged the same pair,
+        so this is learned taste, not head-to-head answers. Grey names have under ${FEW} picks: rough guesses.</p>`;
+    $("tastebody").querySelectorAll(".rname").forEach((b) => (b.onclick = () => openRater(b.dataset.name)));
+  }
+
   // 2026-10-28 (Muajir: "option to exclude a rater, I wanna see if anyone
   // introduced lots of noise ... it should be like a checklist"). Untick a
   // rater to preview the ranking without their answers. Nothing is saved:
@@ -793,6 +859,7 @@
     const data = await r.json();
     state.pg = data.model?.peak_gender || [];
     state.ranker = data.model?.ranker || "m1";
+    state.alts = data.model?.alternates;
     renderModes(data.model?.alternates);
     // One group at a time: scores only compare within cewek or within cowok.
     const grouped = data.faces.some((f) => f.gender);
@@ -864,6 +931,7 @@
     load();
   }));
   $("mapd").addEventListener("toggle", () => { if ($("mapd").open) loadMap(); });
+  $("tasted").addEventListener("toggle", () => { if ($("tasted").open) loadTaste(); });
   $("who").onchange = () => { state.rater = $("who").value; state.filter = "all"; load(); };
   $("gsw").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.g === state.gender)));
   load();
