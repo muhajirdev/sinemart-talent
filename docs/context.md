@@ -66,7 +66,8 @@ team A/B picks (picking page ► Worker ► D1 picks)
   - FaRL and ArcFace weights are research / non-commercial only. Check
     licences before anything beyond the prototype.
 - **Per-rater taste.** The Lab "Taste of" switch fits one rater's own model
-  (cached in `rater_models`, min 5 picks). The rater agreement table shows how
+  on whichever model and shape is selected (cached in `rater_models` under the
+  name for Model 1 many clusters, `name<TAB>mode` otherwise; min 5 picks). The rater agreement table shows how
   well the team model and each other rater predict that rater.
 
 ## Decisions (with dates) — don't undo these without asking Muajir
@@ -91,6 +92,7 @@ team A/B picks (picking page ► Worker ► D1 picks)
 | 2026-10-22 | Bad data is marked as **noise**, not deleted: `applicants.noise` = who marked it (or `'duplicate'`). Noise people drop out of battles, training and leaderboards; their picks stay stored; restorable from the Lab. 15 exact duplicate 2026 sign-ups marked `duplicate`. | Reversible. |
 | 2026-10-25 | "Keduanya kurang menarik" (neither) added. Trained as "both below the gender's no line", not as a tie. | The goal is spotting clear no's. |
 | 2026-10-27 | Lab leaderboard "No battles yet (N)" filter (`?battles=none`). | Find people never shown. |
+| 2026-10-28 | "Taste of" works with every model and shape (default straight line on Model 1, like the team view). The agreement table still uses each rater's many-clusters model. | Muajir asked to compare raters on any model. |
 
 
 ## Data and personal data rules
