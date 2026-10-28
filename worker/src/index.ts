@@ -234,7 +234,7 @@ async function geometryPercentiles(env: Env) {
 }
 
 async function results(env: Env, who: string | null, mode: string | null = null, without: string[] = []) {
-  if (who) return raterResults(env, who);
+  if (who) return raterResults(env, who, mode);
   const model = await env.DB.prepare(
     `SELECT active, heldout_hills, heldout_one, heldout_line, n_test, split_by, n_picks, trained_at, init, params, params_one
      FROM model WHERE id = 1`,
@@ -344,10 +344,10 @@ async function results(env: Env, who: string | null, mode: string | null = null,
 }
 
 // The same page, scored by one rater's personal model.
-async function raterResults(env: Env, who: string) {
-  const m = await raterModel(env, who);
+async function raterResults(env: Env, who: string, mode: string | null = null) {
+  const m = await raterModel(env, who, mode ?? "line");
   if (!m) return json({ error: "no taste space loaded yet" }, 404);
-  const { data, hills, n } = m;
+  const { data, n, fitted } = m;
   const counts = await env.DB.prepare(
     `SELECT SUM(${ANSWERED}) AS decided, COUNT(*) AS total FROM picks WHERE rater = ?1`,
   ).bind(who).first<{ decided: number; total: number }>();
@@ -369,9 +369,9 @@ async function raterResults(env: Env, who: string) {
   const faces = data.faces
     .map((f, i) => ({
       id: f.id,
-      score: hills ? hills.score(data.Z[i], data.G[i]) : null,
+      score: m.score(i),
       score_std: null,
-      look: hills ? hills.hill(data.Z[i], data.G[i]) : null,
+      look: m.hill(i),
       gender: data.G[i],
       gender_src: null,
       wins: wins.get(f.id) ?? 0,
@@ -380,15 +380,19 @@ async function raterResults(env: Env, who: string) {
       ...geo.get(f.id),
     }))
     .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity) || a.id - b.id);
+  // The model switch needs the list of models, same as the team view.
+  const alternates = (await env.DB.prepare(`SELECT key, fixed IS NOT NULL AS has_fixed,
+       EXISTS (SELECT 1 FROM alt_z z WHERE z.key = m.key) AS has_z FROM alt_models m ORDER BY key`).all()).results;
   return json({
     rater: who,
     model: {
-      active: hills ? "hills" : null, n_picks: hills ? n : 0, trained_at: hills ? new Date().toISOString() : null,
-      hills: data.peaks.length, peak_gender: data.peakGroup, min_picks: MIN_PICKS, retrain_every: RETRAIN_EVERY,
+      mode: mode ?? "line", ranker: RANKER, alternates,
+      active: fitted ? "rater" : null, n_picks: fitted ? n : 0, trained_at: fitted ? new Date().toISOString() : null,
+      hills: data.peaks.length, peak_gender: m.pg, min_picks: MIN_PICKS, retrain_every: RETRAIN_EVERY,
     },
     picks: { decided: counts?.decided ?? 0, total: counts?.total ?? 0, raters: 1 },
     faces,
-    params: hills ? JSON.stringify(hills) : null,
+    params: m.params,
   });
 }
 
@@ -521,7 +525,14 @@ export default {
     }
     if (url.pathname === "/api/map" && req.method === "GET") {
       const gender = url.searchParams.get("gender");
-      if (!only && mode && mode !== "line") {
+      if (only) {
+        // One rater's taste: their own scores, on the chosen model's map.
+        const m = await raterModel(env, only, mode ?? "line");
+        if (!m || m.rule) return json({ faces: [], peaks: [], grid: null }); // a fixed rule has no map
+        const faces = new Map(m.data.faces.map((f, i) => [f.id, { score: m.score(i), hill: m.hill(i) }]));
+        return json(await territory(env, { params: m.params, faces, zs: m.zs, init: m.init }, gender));
+      }
+      if (mode && mode !== "line") {
         const r = (await (await results(env, null, mode)).json()) as { faces: { id: number; score: number | null; look: number | null }[] };
         const faces = new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }]));
         if (mode === "one" || mode === "hills" || mode === "1:line") {
@@ -536,12 +547,7 @@ export default {
         const params = variant === "one" ? alt.paramsOne : alt.params; // the line's map shows its hills' clusters
         return json(await territory(env, { params, faces, zs: alt.zs, init: alt.init }, gender));
       }
-      if (!only) return json(await territory(env, undefined, gender));
-      const r = (await (await raterResults(env, only)).json()) as {
-        params: string | null; faces: { id: number; score: number | null; look: number | null }[];
-      };
-      if (!r.faces) return json({ faces: [], peaks: [], grid: null });
-      return json(await territory(env, { params: r.params, faces: new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }])) }, gender));
+      return json(await territory(env, undefined, gender));
     }
     if (url.pathname === "/api/gender" && req.method === "POST") return setGender(req, env, ctx);
     if (url.pathname === "/api/noise" && req.method === "POST") return setNoise(req, env, who, ctx);
