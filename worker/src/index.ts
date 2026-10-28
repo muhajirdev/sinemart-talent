@@ -4,7 +4,7 @@
 
 import { territory } from "./map";
 import {
-  ANSWERED, MIN_PICKS, RANKER, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, rankerLine, raterAgreement, raterModel, retrain, withoutRaters,
+  ANSWERED, MIN_PICKS, RANKER, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, rankerLine, raterAgreement, raterModel, retrain, tasteMatch, withoutRaters,
 } from "./retrain";
 
 export interface Env {
@@ -583,6 +583,7 @@ export default {
     }
     if (url.pathname === "/api/check" && req.method === "GET") return json(await outsideCheck(env));
     if (url.pathname === "/api/raters" && req.method === "GET") return json(await raterAgreement(env));
+    if (url.pathname === "/api/taste-match" && req.method === "GET") return json(await tasteMatch(env) ?? { raters: [], pairs: [], order: [] });
     if (url.pathname === "/api/retrain" && req.method === "POST") return json(await retrain(env));
     if (url.pathname === "/api/reset" && req.method === "POST") {
       // Start testing fresh: forget every pick and everything learned from them.
