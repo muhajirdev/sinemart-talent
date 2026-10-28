@@ -205,8 +205,9 @@ Gotchas:
   back to the 16-number line: embed with the ranker's model (`clipl` for
   Model 6), then `python -m sinemart.full ../data/clipl.npz m6 ../data/out`
   and apply `full_m6.sql` (one INSERT per line, ~20 lines per `--command`
-  chunk: each row is ~6 KB). Keep `full_norm_m6.json`: later additions must
-  use it (`--norm`) so nobody else moves.
+  chunk: each row is ~6 KB). Keep `full_norm_m6.json` (the live one is in R2
+  `models/m6/full_norm.json`): later additions must use it (`--norm`) so
+  nobody else moves.
 - Outside labels (like the 2026 shortlist) go into `outside_labels`
   (`applicant_id, source, label`) and show only as aggregates in `/api/check`.
   Never show them to raters.
