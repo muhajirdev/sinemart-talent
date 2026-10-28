@@ -36,9 +36,10 @@ team A/B picks (picking page ► Worker ► D1 picks)
   as a half win), "Keduanya kurang menarik" (neither: both are a clear no),
   "Lewati" (skip, not trained) and "↶ Batalkan" (undo the last answer within
   30 minutes).
-- **The ranker is a straight line** (Bradley–Terry):
+- **The ranker is a straight line** (Bradley–Terry) **on Model 6** (since
+  2026-10-27; `RANKER` in `worker/src/retrain.ts`):
   P(a beats b) = sigmoid(w·z(a) − w·z(b)), fitted on every pick from every
-  rater (`worker/src/hills.ts`, class `Arrow`). "Neither" picks teach a
+  rater (`worker/src/hills.ts`, class `Arrow`) in Model 6's taste space. "Neither" picks teach a
   per-gender "no" line `tau`: both faces should score below it. The spread of
   3 bootstrap fits gives each person's `score_std`.
 - **Battles** are chosen after every retrain (`groupedPairs`, `nextPairs`):
@@ -51,11 +52,12 @@ team A/B picks (picking page ► Worker ► D1 picks)
   reports how often each model gets the held-out picks right. That number is
   the main health metric.
 - **Comparison models.** Same picks, other embeddings or other shapes. They
-  never drive battles; they exist to see whether something beats the line.
+  never drive battles; they exist to see whether something beats the ranker.
+  Model 1's own line is the Lab's "Model 1 · Straight line" (`?model=1:line`).
   - Shapes on Model 1: "Many clusters" (hills: one peak per look, score falls
     off with distance from the peak) and "One cluster" (one hill per gender).
   - Models (UI shows only "Model N", by key order): Model 1 = SigLIP 2 base
-    (the ranker), m2 DINOv2 base, m3 FaRL, m4 ArcFace (InsightFace buffalo_l),
+    (the ranker until 2026-10-27; its hills still name the clusters), m2 DINOv2 base, m3 FaRL, m4 ArcFace (InsightFace buffalo_l),
     m5 SigLIP 2 so400m, m6 OpenAI CLIP ViT-L/14, m7 PE-Core-L-14-336,
     m8 face parts (eyes, nose, mouth, jaw each embedded with SigLIP 2 base,
     `pipeline/sinemart/parts.py`).
@@ -91,7 +93,12 @@ team A/B picks (picking page ► Worker ► D1 picks)
 | 2026-10-22 | Question copy: "Mana yang lebih menarik?" with a separate "Pilih yang ini" button and undo. | |
 | 2026-10-22 | Bad data is marked as **noise**, not deleted: `applicants.noise` = who marked it (or `'duplicate'`). Noise people drop out of battles, training and leaderboards; their picks stay stored; restorable from the Lab. 15 exact duplicate 2026 sign-ups marked `duplicate`. | Reversible. |
 | 2026-10-25 | "Keduanya kurang menarik" (neither) added. Trained as "both below the gender's no line", not as a tie. | The goal is spotting clear no's. |
+| 2026-10-27 | **Model 6's straight line ranks and picks battles** (was Model 1's). Model 1's line, hills and one cluster stay as comparisons; Model 1's hills still name the clusters (`look`). | Muajir: "can we try model 6". Offline, 30 held-out splits by applicant: 74.8% vs 64.0% at 552 comparisons, and 71.9% vs 60.6% with the "neither" burst, ahead in 30 of 30 both times. Dropping aa / ivan / Test didn't help (+0.8, noise); combining models, other regularisation, fewer dimensions or a line per gender were all worse. |
 | 2026-10-27 | Lab leaderboard "No battles yet (N)" filter (`?battles=none`). | Find people never shown. |
+| 2026-10-27 | **"bc" test batch**: 201 faces from an Instagram showcase account (R2 `talent-applicant/bc/`, expandra account) loaded as a model test only: ids 900001+, `source = 'bc'`, `test = 1`, so they are never in battles or training. Projected into the live taste space (`sinemart.project`), not re-published. | Muajir: "test our model against this new bucket"; "no need to be in listing for pickings". |
+| 2026-10-27 | **Scorer app** (`scorer/`, "Nilai Foto"): score photos of someone not in the app with Model 1 and Model 6, read-only, photos never stored. TanStack Start on Workers for the page and maths; a Cloudflare Container runs the Python face pipeline (pinned versions, so numbers match the pipeline). Taste spaces now saved in R2 `models/<key>/taste.json`. Live at <https://sinemart-scorer.qalam.workers.dev> (separate Worker `sinemart-scorer`; the picking app is untouched). | Muajir: "upload a new photo … pick model 6 with straight line … give score"; "run on tanstack server", Cloudflare Containers. |
+| 2026-10-27 | The Lab shows **comparisons** (winner or tie) as the headline count, with "neither" and skips beside it, and the rater table shows every rater's winners / ties / neither / skips and median seconds per answer (under 1.5 s highlighted). | "Decided" mixed in a 1,363-answer "neither" burst and read as 2,348 picks. |
+| 2026-10-27 | Lab leaderboard **Sources** checklist (2021, 2026, bc). From `applicants.source`; test batches (`applicants.test = 1`) are off by default; ticked, they rank among applicants, scored live by Model 1's line, and the 0–100 scale stays relative to applicants only. Test batches are a column of their own, not `noise` (first loaded as `noise = 'bc'`, which put all 201 under "Marked as bad photos"). | Muajir: "show applicant sources, like checklist"; "we can choose to include this bc sources". |
 | 2026-10-28 | "Taste of" works with every model and shape (default straight line on Model 1, like the team view). The agreement table still uses each rater's many-clusters model. | Muajir asked to compare raters on any model. |
 
 
@@ -128,19 +135,28 @@ Rules:
 
 - Live: <https://sinemart-talent.qalam.workers.dev> (picking) and `/results`
   (the Lab).
-- 840 people (189 from 2021, 651 from 2026); 16 marked noise.
-- ~590 decided picks (the `picks` table also holds ~1,200 skips; never quote
-  raw row counts). Scores trained on 520 picks.
+- 840 people (189 from 2021, 651 from 2026); 17 marked noise. Plus 201 "bc"
+  test faces (`test = 1`, ids 900001+), scored on the Lab only.
+- 846 comparisons (703 with a winner, 143 ties) plus ~1,600 "neither" and
+  ~1,400 skips (late 2026-10-27). Count **comparisons** for milestones:
+  "decided" includes "neither", and 1,363 of those came from one burst
+  (open items).
 - Held-out agreement at 520 picks (174 held-out picks; ±4 points is noise):
-  Model 1 line 65% (the ranker), hills 57%; m6 CLIP L/14 line 76%,
+  Model 1 line 65% (the ranker then), hills 57%; m6 CLIP L/14 line 76%,
   m3 FaRL 73%, m7 67%, m4 65%, m5 65%, m2 60%, m8 parts 56%;
   golden ratio straightened 58%, original 54%.
 
 Open items:
 
-- **Recheck the ranker at ~1,000 picks** (weekly check from 2026-10-29). If
-  m6 (CLIP L/14) still beats the line by >5 points, propose switching Model 1
-  to it. Remember FaRL is non-commercial.
+- **"Neither" burst** (2026-10-27): "OKI Hartanto (2)" answered "Keduanya
+  kurang menarik" 1,363 times in 34 minutes (15:39–16:13 UTC, median ~0.8 s),
+  covering 775 of 823 people, and picked a winner only 61 times. It trains
+  the "no" line but says little about who is better. Ask OKI; if it wasn't
+  real, leave that burst out of training (keep the rows). Probably the same
+  person as "Oki Hartanto" (the "(2)" makes a separate name).
+- **Recheck the ranker at ~1,000 comparisons** (not "decided" answers) (weekly check from 2026-10-29).
+  Model 6 ranks since 2026-10-27; switch again only if another model beats it
+  by >5 points held-out. Remember FaRL (m3) is non-commercial.
 - **Near-duplicate scan** (2026-10-27): 6 groups / 15 extra sign-ups found by
   face match (one man signed up 11 times). Awaiting Muajir's OK to mark them
   `noise = 'duplicate'` (and possibly move their picks to the kept id).

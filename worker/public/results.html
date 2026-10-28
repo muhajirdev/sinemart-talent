@@ -139,6 +139,7 @@
 <section id="contrast" class="card contrast" hidden></section>
 <section id="noise" class="card" hidden></section>
 <h2 id="boardTitle" hidden>Leaderboard</h2>
+<div class="chips" id="srcs"></div>
 <div class="chips" id="chips"></div>
 <ol id="faces"></ol>
 <div class="lb" id="lb" hidden role="dialog" aria-modal="true" aria-label="Candidate photos">
@@ -166,7 +167,9 @@
     const m = d.model || {};
     const p = d.picks || { decided: 0, total: 0, raters: 0 };
     const trained = !!m.trained_at;
-    const scored = d.faces.filter((f) => f.score != null);
+    // The 0-100 scale is against an average applicant, so a test batch
+    // switched on doesn't move anyone else's number.
+    const scored = d.faces.filter((f) => f.score != null && !f.test);
     const mean = scored.reduce((a, f) => a + f.score, 0) / (scored.length || 1);
     const toNext = Math.max(0, (m.n_picks || 0) + m.retrain_every - p.decided);
     $("model").hidden = false;
@@ -188,19 +191,20 @@
     }
     $("model").innerHTML = `
       <div class="stats">
-        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "line" || !m.mode ? "shown here, and picks the battles" : "shown here (battles use Model 1, straight line)"} · ${isRule(m.mode, m.alternates) ? `face proportions, symmetry and averageness${m.mode === "geo_raw" ? " measured on the photos as they are" : " measured with faces straightened"}; no clusters` : state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
-        <div class="stat"><b>${p.decided}</b><span>picks by ${p.raters} rater${p.raters === 1 ? "" : "s"} (${p.ties || 0} "sama saja", ${p.neithers || 0} "keduanya kurang menarik", ${p.total - p.decided} skipped)</span></div>
-        <div class="stat"><b>${pct(m.heldout_line)}</b><span>Model 1 straight line: held-out agreement</span></div>
+        <div class="stat"><b>${!trained ? "Not trained" : modeName(m.mode, m.alternates)}</b><span>${m.mode === "line" || !m.mode ? "shown here, and picks the battles" : `shown here (battles use ${rankerName(m.alternates)}, straight line)`} · ${isRule(m.mode, m.alternates) ? `face proportions, symmetry and averageness${m.mode === "geo_raw" ? " measured on the photos as they are" : " measured with faces straightened"}; no clusters` : state.pg.length ? `${state.pg.filter((g) => g === state.gender).length} ${gname[state.gender]} clusters` : `${m.hills || 0} clusters (looks)`}</span></div>
+        <div class="stat"><b>${p.decided - (p.neithers || 0)}</b><span>comparisons by ${p.raters} rater${p.raters === 1 ? "" : "s"} (one face picked, or ${p.ties || 0} "sama saja"); plus ${p.neithers || 0} "keduanya kurang menarik" and ${p.total - p.decided} skipped</span></div>
+        <div class="stat"><b>${pct(state.ranker === "m1" ? m.heldout_line : (m.alternates || []).find((a) => a.key === state.ranker)?.heldout_line)}</b><span>${rankerName(m.alternates)} straight line (ranks everyone, picks the battles): held-out agreement</span></div>
         <div class="stat" id="ceil"><b>–</b><span>Raters repeating their own pick (no repeats yet)</span></div>
       </div>
       <table class="cmp"><thead><tr><th>Held-out agreement</th><th>Straight line</th><th>Many clusters</th><th>One cluster</th></tr></thead><tbody>
-        ${[["Model 1", m.heldout_line, m.heldout_hills, m.heldout_one], ...(m.alternates || []).filter((a) => a.has_z).map((a) => [altName(a.key, m.alternates), a.heldout_line, a.heldout, a.heldout_one])]
+        ${[["Model 1", m.heldout_line, m.heldout_hills, m.heldout_one, "m1"], ...(m.alternates || []).filter((a) => a.has_z).map((a) => [altName(a.key, m.alternates), a.heldout_line, a.heldout, a.heldout_one, a.key])]
+          .map(([n, l, a, b, k]) => [k === state.ranker ? `${n} (ranks)` : n, l, a, b])
           .map(([n, l, a, b]) => `<tr><td>${n}</td><td>${pct(l)}</td><td>${pct(a)}</td><td>${pct(b)}</td></tr>`).join("")}
         ${(m.alternates || []).filter((a) => a.has_fixed).map((a) => `<tr><td>${a.has_z ? altName(a.key, m.alternates) + " fixed rule" : altName(a.key, m.alternates)}</td>
           <td colspan="3">${pct(a.heldout_fixed)} <span style="color:var(--muted)">(fixed rule, not trained on picks)</span></td></tr>`).join("")}
       </tbody></table>
       <p class="note">${trained
-        ? `Trained on ${m.n_picks} picks at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
+        ? `Trained on ${m.n_picks} answers (comparisons plus "keduanya kurang menarik") at ${new Date(m.trained_at).toLocaleString()}. Held-out = ${m.n_test} picks the model didn't see, split by ${m.split_by}. ${m.n_test < 20 ? "Too few to trust yet." : ""}`
         : "Learning starts after 5 picks."}
         Retrains by itself every ${m.retrain_every} picks${trained ? ` (next in ${toNext})` : ""}.</p>
       <p class="note">Score = how often (0–100) this person would win against an average applicant in the same group.
@@ -225,7 +229,7 @@
     $("msg").hidden = true;
   }
 
-  const state = { d: null, mean: 0, filter: "all", fresh: false, map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 }, gender: "f", pg: [], mode: "line" };
+  const state = { d: null, mean: 0, filter: "all", fresh: false, map: null, sel: null, rater: "", view: { x: 0, y: 0, w: 100 }, gender: "f", pg: [], mode: "line", ranker: "m1" };
   // The view lives in the URL (?gender=m&model=m3:one&rater=Siska&cluster=4&battles=none),
   // so a refresh or a shared link opens the same view. Defaults are left out.
   const qs = new URLSearchParams(location.search);
@@ -234,6 +238,9 @@
   if (qs.get("rater")) state.rater = qs.get("rater");
   if (qs.get("cluster")) state.filter = qs.get("cluster");
   state.fresh = qs.get("battles") === "none";
+  // Sources shown on the leaderboard; null = the default (every applicant
+  // source, no test batches).
+  state.sources = qs.get("sources") ? new Set(qs.get("sources").split(",")) : null;
   function saveUrl() {
     const p = new URLSearchParams();
     if (state.gender !== "f") p.set("gender", state.gender);
@@ -241,6 +248,7 @@
     if (state.rater) p.set("rater", state.rater);
     if (state.filter !== "all") p.set("cluster", state.filter);
     if (state.fresh) p.set("battles", "none");
+    if (state.sources) p.set("sources", [...state.sources].join(","));
     history.replaceState(null, "", location.pathname + (p.size ? "?" + p : ""));
   }
   // Hills are numbered and coloured within their group (cewek / cowok).
@@ -258,7 +266,12 @@
   const altName = (key, alts) => isRule(key, alts) ? RULES[key] ?? "Golden ratio"
     : `Model ${(alts || []).filter((a) => a.has_z).findIndex((a) => a.key === key) + 2}`;
   const variantName = { line: "straight line", one: "one cluster", many: "many clusters" };
-  const modeName = (mode, alts) => !mode || mode === "line" ? "Model 1 · straight line"
+  // The model whose straight line ranks everyone and picks the battles
+  // ("line" mode); 2026-10-27 Model 6, before that Model 1.
+  const rankerKey = () => (state.ranker === "m1" ? "1" : state.ranker);
+  const rankerName = (alts) => (state.ranker === "m1" ? "Model 1" : altName(state.ranker, alts));
+  const modeName = (mode, alts) => !mode || mode === "line" ? `${rankerName(alts)} · straight line`
+    : mode === "1:line" ? "Model 1 · straight line"
     : mode === "one" ? "Model 1 · one cluster"
     : mode === "hills" ? "Model 1 · many clusters"
     : isRule(mode, alts) ? altName(mode, alts)
@@ -292,13 +305,28 @@
   function renderBoard() {
     const d = state.d;
     state.geo = geoPercentiles(d.faces);
-    const hills = [...new Set(d.faces.map((f) => f.look).filter((x) => x != null))].sort((a, b) => a - b);
+    const hills = [...new Set(d.faces.filter((f) => !f.test).map((f) => f.look).filter((x) => x != null))].sort((a, b) => a - b);
     $("boardTitle").hidden = false;
+    // Sources checklist: where people came from (2021, 2026, ...). Test
+    // batches like "bc" were never picked; they're off unless ticked.
+    const srcs = [...new Map(d.faces.map((f) => [f.source, !!f.test])).entries()]
+      .sort(([a, at], [b, bt]) => at - bt || String(a).localeCompare(String(b)));
+    const on = (src, test) => src == null || (state.sources ? state.sources.has(String(src)) : !test); // one rater's view has no sources
+    $("srcs").hidden = srcs.length < 2;
+    $("srcs").innerHTML = `<span class="meta" style="align-self:center">Sources:</span>` + srcs.map(([src, test]) =>
+      `<label class="meta" style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-src="${esc(src)}" ${on(src, test) ? "checked" : ""}>
+        ${esc(src)}${test ? " (test, not picked)" : ""} (${d.faces.filter((f) => f.source === src).length})</label>`).join("");
+    $("srcs").querySelectorAll("input").forEach((c) => (c.onchange = () => {
+      const picked = new Set([...$("srcs").querySelectorAll("input:checked")].map((x) => x.dataset.src));
+      const dflt = srcs.every(([src, test]) => picked.has(String(src)) === !test);
+      state.sources = dflt ? null : picked; saveUrl(); renderBoard();
+    }));
+    const shown = d.faces.filter((f) => on(f.source, f.test));
     $("chips").innerHTML = [["all", "All"], ...hills.map((k) => [String(k), hn(k)])]
       .map(([v, label]) => `<button data-f="${v}" aria-pressed="${state.filter === v}">${label}</button>`).join("");
     // "No battles yet": people nobody has picked for or against so far (in
     // this group, noise already left out), on top of the cluster chosen.
-    const inCluster = d.faces.filter((f) => state.filter === "all" || String(f.look) === state.filter);
+    const inCluster = shown.filter((f) => state.filter === "all" || String(f.look) === state.filter);
     const fresh = inCluster.filter((f) => !f.games).length;
     $("chips").innerHTML += `<button data-fresh aria-pressed="${state.fresh}" style="margin-left:auto">No battles yet (${fresh})</button>`;
     $("chips").querySelectorAll("button[data-f]").forEach((b) => (b.onclick = () => { state.filter = b.dataset.f; saveUrl(); renderBoard(); }));
@@ -314,7 +342,7 @@
         <div>
           <div class="score">${beat == null ? "not scored" : Math.round(beat * 100)}</div>
           <div class="bar"><i style="width:${beat == null ? 0 : beat * 100}%"></i></div>
-          <div class="meta">#${f.id} · ${f.look == null ? "no cluster" : `<span class="tag ${hc(f.look)}">${hn(f.look)}</span>`}${f.gender ? ` · ${gname[f.gender]}${f.gender_src === "manual" ? " (fixed)" : ""}
+          <div class="meta">#${f.id}${f.test ? ` · <span class="tag" style="--c:var(--muted)">${esc(f.source)}</span>` : ""} · ${f.look == null ? "no cluster" : `<span class="tag ${hc(f.look)}">${hn(f.look)}</span>`}${f.gender ? ` · ${gname[f.gender]}${f.gender_src === "manual" ? " (fixed)" : ""}
               <button class="gfix" data-id="${f.id}" data-g="${f.gender === "f" ? "m" : "f"}">wrong? move to ${gname[f.gender === "f" ? "m" : "f"]}</button>` : ""}</div>
           <div class="meta">${battles(f)}${f.n_photos > 1 ? ` · ${f.n_photos} photos` : ""}${certainty(f)}</div>
           <div class="meta">${geoLine(f)}</div>
@@ -588,12 +616,19 @@
     if ($("ceil") && a.repeat?.n) $("ceil").innerHTML = `<b>${pct(a.repeat.same)}</b><span>raters repeat their own pick
       (${a.repeat.n} repeat${a.repeat.n === 1 ? "" : "s"}): the most any model can reach</span>`;
     const cell = (x, n) => (x == null ? "–" : `${pct(x)}<span class="meta"> /${n}</span>`);
+    // Everything a rater answered and how fast: a run of 1-second "neither"
+    // answers says little about taste but still trains the "no" line.
+    const answers = (r) => {
+      const c = r.answers || {}, s = r.median_ms == null ? null : r.median_ms / 1000;
+      return `<div style="white-space:nowrap">${c.winners || 0} picked<br>${c.ties || 0} sama saja<br>${c.neither || 0} neither<br>${c.skips || 0} skipped`
+        + (s == null ? "" : `<br><span class="meta"${s < 1.5 ? ' style="color:var(--accent)" title="Very fast answers: check these were real judgements"' : ""}>${s.toFixed(1)} s each</span>`) + "</div>";
+    };
     const cross = new Map(a.cross.map((c) => [`${c.model}|${c.picks_of}`, c]));
     $("agree").hidden = false;
     $("agree").innerHTML = `<h2>Rater agreement</h2>
       <div class="scroll"><table>
-        <tr><th>Rater</th><th>Picks</th><th>Team model agrees</th>${names.length > 1 ? names.map((n) => `<th>${esc(n)}'s taste predicts</th>`).join("") : ""}</tr>
-        ${a.raters.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.picks}</td><td>${cell(r.team, r.picks)}</td>
+        <tr><th>Rater</th><th>Answers</th><th>Team model agrees</th>${names.length > 1 ? names.map((n) => `<th>${esc(n)}'s taste predicts</th>`).join("") : ""}</tr>
+        ${a.raters.map((r) => `<tr><td>${esc(r.name)}</td><td>${answers(r)}</td><td>${cell(r.team, r.picks)}</td>
           ${names.length > 1 ? names.map((m) => {
             if (m === r.name) return "<td class='meta'>·</td>";
             const c = cross.get(`${m}|${r.name}`);
@@ -604,7 +639,8 @@
         `${esc(r.name)} picked the same face ${pct(r.same)} of ${r.n}`).join("; ")}.</p>` : ""}
       ${a.same_pair.length ? `<p class="note">Same pair judged twice: ${a.same_pair.map((s) =>
         `${esc(s.a)} &amp; ${esc(s.b)} picked the same face ${pct(s.agree)} of ${s.n}`).join("; ")}.</p>` : ""}
-      <p class="note">Each row is one rater's picks. "Team model agrees" = how many of their picks the all-raters ranking
+      <p class="note">Each row is one rater. "Answers" = everything they answered; the agreement columns use only answers
+        with a picked face (the "/N" after each %). "Team model agrees" = how many of their picks the all-raters ranking
         gets right (it learned from them, so this runs high). "X's taste predicts" = how many of that row's picks X's
         personal model gets right. 50% is a coin flip; near 100% means the two see beauty the same way.
         ${names.length < 2 ? "A second rater is needed to compare people." : ""}</p>`;
@@ -624,6 +660,7 @@
     if (r.status === 401) { $("msg").innerHTML = '<a href="/">Sign in on the picking page first</a>.'; return; }
     const data = await r.json();
     state.pg = data.model?.peak_gender || [];
+    state.ranker = data.model?.ranker || "m1";
     renderModes(data.model?.alternates);
     // One group at a time: scores only compare within cewek or within cowok.
     const grouped = data.faces.some((f) => f.gender);
@@ -669,10 +706,11 @@
   // Which model ranks the page: Model 1 or Model 2+ (another embedding),
   // and its shape: a straight line (what battles use), many clusters, or one
   // cluster per group.
-  const modeOf = (model, c) => model === "1" ? ({ line: "line", one: "one", many: "hills" })[c]
+  const modeOf = (model, c) => c === "line" && model === rankerKey() ? "line"
+    : model === "1" ? ({ line: "1:line", one: "one", many: "hills" })[c]
     : c === "many" ? model : `${model}:${c}`;
   function renderModes(alts) {
-    const model = ["line", "hills", "one"].includes(state.mode) ? "1" : state.mode.split(":")[0];
+    const model = state.mode === "line" ? rankerKey() : ["hills", "one"].includes(state.mode) ? "1" : state.mode.split(":")[0];
     const c = state.mode === "line" || state.mode.endsWith(":line") ? "line"
       : state.mode === "one" || state.mode.endsWith(":one") ? "one" : "many";
     const models = [["1", "Model 1"], ...(alts || []).filter((a) => a.has_z).map((a) => [a.key, altName(a.key, alts)]),

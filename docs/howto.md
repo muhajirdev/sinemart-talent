@@ -10,6 +10,8 @@ and decisions are in [context.md](./context.md); how each step works is in
 - [Retrain](#retrain)
 - [Mark bad photos and duplicates](#mark-bad-photos-and-duplicates)
 - [Load new applicants](#load-new-applicants)
+- [Test the model on a batch outside the picks](#test-the-model-on-a-batch-outside-the-picks)
+- [Score a photo outside the app (scorer)](#score-a-photo-outside-the-app-scorer)
 - [Add a comparison model](#add-a-comparison-model)
 - [Golden ratio and face parts](#golden-ratio-and-face-parts)
 - [Change the schema](#change-the-schema)
@@ -49,7 +51,7 @@ npx wrangler deploy
 ```
 
 There is no CI and no auto-deploy: merging a PR does **not** deploy. PRs merge
-into the default branch `claude/project-thread-60dxh0`.
+into the default branch `main` (before 2026-10-27: `claude/project-thread-60dxh0`).
 
 After deploying, open the picking page and the Lab once and check a pair loads
 and the scores show.
@@ -202,6 +204,54 @@ Gotchas:
 - Outside labels (like the 2026 shortlist) go into `outside_labels`
   (`applicant_id, source, label`) and show only as aggregates in `/api/check`.
   Never show them to raters.
+
+## Test the model on a batch outside the picks
+
+For a batch that should be scored but never picked (the "bc" showcase
+photos, 2026-10-27). It keeps the live taste space and every score as they
+are; re-publishing would refit both.
+
+1. Crop the batch with its own id range (bc: `900000 + post number`) and
+   `stage`, embed it and guess gender (steps 1–2 above).
+2. Re-make the live taste space: download the live crops from R2 `crops/`
+   (skip the old plain `<id>.jpg` files; the live load used only
+   `<id>-<kind>.jpg`), embed them with the same model, export
+   `SELECT id, z FROM applicants` as JSON, then
+   `python -m sinemart.project live.npz batch.npz live_z.json batch_z.json`.
+   It must report max |dz| ≈ 0; otherwise the crops don't match the load.
+3. Score = `w · z` with `w` from `model.params_line` (the Lab shows
+   `sigmoid(score − gender mean)` as 0–100).
+4. Upload the crops to R2 `crops/` and insert `applicants` rows with
+   `test = 1` and `source = stage = '<tag>'`. `test` keeps them out of
+   battles, training, the map and the screening check; the Lab's Sources
+   checklist offers them, unticked by default. Don't use `noise` for this:
+   that is for bad photos and lists them under "Marked as bad photos".
+5. For a comparison model, the same with `alt_z WHERE key = 'mN'` and its
+   `params_line`; insert `alt_z` rows for the batch (retrain ignores ids
+   that aren't in training).
+
+Gotchas: retrains never touch test rows, so the stored `score` is from the
+model at load time; the Lab re-scores test batches with the current line on
+every load (other models need their `alt_z` rows). `sinemart.publish`
+keeps test rows but builds a new taste space, so after a re-publish their
+`z` is stale: re-run step 2 onwards.
+
+## Score a photo outside the app (scorer)
+
+`scorer/` is a separate app ("Nilai Foto", TanStack Start on Workers plus a
+Python container): upload 1–6 photos of one person, get Model 1 and Model 6
+scores, rank and percentile against the applicants, with today's weights.
+Nothing is stored. Details in [scorer/README.md](../scorer/README.md).
+
+- It needs each model's taste space in R2 `models/<key>/taste.json`.
+  `sinemart.publish` writes `out/taste.json` (Model 1) and `sinemart.alt`
+  writes `<out>.taste.json`; **upload them after every re-publish or
+  reload**, or the scorer projects into an old space.
+- For a taste space that wasn't saved at load time, rebuild it from the R2
+  crops: `python -m sinemart.project --taste live.npz live_z.json taste.json`
+  (must report max |dz| ≈ 0).
+- Deploying it is separate from the main Worker (`cd scorer && npm run
+  deploy`) and, like any deploy, needs Muajir's OK.
 
 ## Add a comparison model
 

@@ -4,7 +4,7 @@
 
 import { territory } from "./map";
 import {
-  ANSWERED, MIN_PICKS, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, raterAgreement, raterModel, retrain,
+  ANSWERED, MIN_PICKS, RANKER, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, rankerLine, raterAgreement, raterModel, retrain,
 } from "./retrain";
 
 export interface Env {
@@ -112,10 +112,10 @@ async function nextPair(env: Env, who: Rater) {
 
   // Queue empty (cold start, or the trainer hasn't refilled it): random pair.
   // Same group only: cewek vs cewek, cowok vs cowok.
-  const a = await env.DB.prepare("SELECT id, gender FROM applicants WHERE noise IS NULL ORDER BY RANDOM() LIMIT 1").first<{ id: number; gender: string | null }>();
+  const a = await env.DB.prepare("SELECT id, gender FROM applicants WHERE noise IS NULL AND test = 0 ORDER BY RANDOM() LIMIT 1").first<{ id: number; gender: string | null }>();
   if (!a) return null;
   const b = await env.DB.prepare(
-    "SELECT id FROM applicants WHERE id != ?1 AND gender IS ?2 AND noise IS NULL ORDER BY RANDOM() LIMIT 1",
+    "SELECT id FROM applicants WHERE id != ?1 AND gender IS ?2 AND noise IS NULL AND test = 0 ORDER BY RANDOM() LIMIT 1",
   ).bind(a.id, a.gender).first<{ id: number }>();
   if (!b) return null;
   return { queue_id: null, left_id: a.id, right_id: b.id };
@@ -195,7 +195,7 @@ async function maybeRetrain(env: Env) {
   const row = await env.DB.prepare(
     `SELECT (SELECT COUNT(*) FROM picks p JOIN applicants a ON a.id = p.left_id JOIN applicants b ON b.id = p.right_id
              WHERE (p.winner_id IS NOT NULL OR p.tie = 1 OR p.neither = 1) AND p.kind != 'repeat' AND a.gender IS b.gender
-               AND a.z IS NOT NULL AND b.z IS NOT NULL AND a.noise IS NULL AND b.noise IS NULL) AS picks,
+               AND a.z IS NOT NULL AND b.z IS NOT NULL AND a.noise IS NULL AND b.noise IS NULL AND a.test = 0 AND b.test = 0) AS picks,
             (SELECT n_picks FROM model WHERE id = 1) AS trained`,
   ).first<{ picks: number; trained: number | null }>();
   if (row && row.trained !== null && row.picks - row.trained >= RETRAIN_EVERY) await retrain(env);
@@ -252,11 +252,32 @@ async function results(env: Env, who: string | null, mode: string | null = null)
        (SELECT COUNT(*) FROM picks p WHERE p.winner_id = a.id) AS wins,
        (SELECT COUNT(*) FROM picks p WHERE (p.winner_id IS NOT NULL OR p.tie = 1 OR p.neither = 1) AND (p.left_id = a.id OR p.right_id = a.id)) AS games,
        (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos,
-       g.phi_dev, g.pallett_dev, g.asymmetry, g.atypicality
+       g.phi_dev, g.pallett_dev, g.asymmetry, g.atypicality, a.source, a.test, CASE WHEN a.test = 1 THEN a.z END AS z
      FROM applicants a LEFT JOIN geometry g ON g.applicant_id = a.id WHERE a.noise IS NULL ORDER BY a.score DESC NULLS LAST, a.id`,
   ).all<Record<string, unknown>>();
+  // Retrains never touch test faces, so their stored score is from load
+  // time: score them with the ranker's current straight line instead.
+  const rl = await rankerLine(env);
+  for (const f of faces) {
+    if (f.test) { const z = rl?.zs.get(f.id as number); f.score = rl && z ? rl.line.score(z) : null; }
+    delete f.z;
+  }
   let peakGender: (string | null)[] | null = null;
-  if (mode && mode !== "one" && mode !== "hills" && mode !== "line") {
+  if (mode === "1:line") {
+    // Model 1's own straight line, a comparison once another model ranks.
+    const p = (await env.DB.prepare("SELECT params_line FROM model WHERE id = 1").first<{ params_line: string | null }>())?.params_line;
+    const line1 = p ? arrowFrom(JSON.parse(p)) : null;
+    const zs = new Map(
+      (await env.DB.prepare("SELECT id, z FROM applicants WHERE z IS NOT NULL").all<{ id: number; z: string }>())
+        .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
+    );
+    for (const f of faces) {
+      const z = zs.get(f.id as number);
+      f.score = line1 && z ? line1.score(z) : null;
+      f.score_std = null;
+    }
+    faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
+  } else if (mode && mode !== "one" && mode !== "hills" && mode !== "line") {
     // Model 2 (another embedding), trained on the same picks. "m2" is that
     // embedding with many hills, "m2:one" one hill per group, "m2:line" the
     // straight arrow (clusters still from its hills).
@@ -275,6 +296,8 @@ async function results(env: Env, who: string | null, mode: string | null = null)
       f.look = h && z ? h.hill(z, g) : null;
       f.score_std = null;
     }
+    faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
+  } else if (!mode || mode === "line") {
     faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
   }
   if (mode === "one" || mode === "hills") {
@@ -298,7 +321,7 @@ async function results(env: Env, who: string | null, mode: string | null = null)
   if (model) delete model.init;
   return json({
     model: {
-      ...model, mode: mode ?? "line", hills: init?.peaks?.length ?? 0, alternates,
+      ...model, mode: mode ?? "line", ranker: RANKER, hills: init?.peaks?.length ?? 0, alternates,
       peak_gender: peakGender ?? init?.peak_gender ?? [],
       retrain_every: RETRAIN_EVERY,
     },
@@ -350,7 +373,7 @@ async function raterResults(env: Env, who: string, mode: string | null = null) {
   return json({
     rater: who,
     model: {
-      mode: mode ?? "line", alternates,
+      mode: mode ?? "line", ranker: RANKER, alternates,
       active: fitted ? "rater" : null, n_picks: fitted ? n : 0, trained_at: fitted ? new Date().toISOString() : null,
       hills: data.peaks.length, peak_gender: m.pg, min_picks: MIN_PICKS, retrain_every: RETRAIN_EVERY,
     },
@@ -391,7 +414,7 @@ async function setNoise(req: Request, env: Env, who: Rater, ctx: ExecutionContex
 async function outsideCheck(env: Env) {
   const { results } = await env.DB.prepare(
     `SELECT l.source, l.label, a.gender, a.score FROM outside_labels l JOIN applicants a ON a.id = l.applicant_id
-     WHERE a.score IS NOT NULL AND a.noise IS NULL`,
+     WHERE a.score IS NOT NULL AND a.noise IS NULL AND a.test = 0`,
   ).all<{ source: string; label: number; gender: string; score: number }>();
   const out = [];
   for (const source of [...new Set(results.map((r) => r.source))]) {
@@ -474,14 +497,15 @@ export default {
       if (only) {
         // One rater's taste: their own scores, on the chosen model's map.
         const m = await raterModel(env, only, mode ?? "line");
-        if (!m || (!m.zs && mode && !["line", "hills", "one"].includes(mode))) return json({ faces: [], peaks: [], grid: null }); // a fixed rule has no map
+        if (!m || m.rule) return json({ faces: [], peaks: [], grid: null }); // a fixed rule has no map
         const faces = new Map(m.data.faces.map((f, i) => [f.id, { score: m.score(i), hill: m.hill(i) }]));
         return json(await territory(env, { params: m.params, faces, zs: m.zs, init: m.init }, gender));
       }
       if (mode && mode !== "line") {
         const r = (await (await results(env, null, mode)).json()) as { faces: { id: number; score: number | null; look: number | null }[] };
         const faces = new Map(r.faces.map((f) => [f.id, { score: f.score, hill: f.look }]));
-        if (mode === "one" || mode === "hills") {
+        if (mode === "one" || mode === "hills" || mode === "1:line") {
+          // Model 1's line shows Model 1's many-hills clusters, like the ranker does.
           const m = await env.DB.prepare("SELECT params, params_one FROM model WHERE id = 1")
             .first<{ params: string | null; params_one: string | null }>();
           return json(await territory(env, { params: (mode === "one" ? m?.params_one : m?.params) ?? null, faces }, gender));

@@ -16,6 +16,11 @@ export const ANSWERED = "(winner_id IS NOT NULL OR tie = 1 OR neither = 1)";
 // About 1 in REPEAT_EVERY battles re-asks a pair the rater already answered.
 // Those answers measure how consistent people are, so they stay out of training.
 export const REPEAT_EVERY = 20;
+// Which model's straight line ranks everyone and picks the battles: "m1" is
+// Model 1 (the main taste space), anything else an alt_models key.
+// 2026-10-27: Model 6 (Muajir: "can we try model 6"). Offline, 30 held-out
+// splits at 552 picks: 74.8% vs Model 1's 64.0%, ahead in all 30.
+export const RANKER: string = "m6";
 
 type Env = { DB: D1Database };
 export type Params = { A: number[]; q: number[]; r: number; K: number; pg?: (string | null)[] };
@@ -32,7 +37,7 @@ export async function loadData(env: Env, rater: string | null = null) {
   const peaks = init.peaks;
   const peakGroup: (string | null)[] = init.peak_gender ?? [];
   const faces = (
-    await env.DB.prepare("SELECT id, z, gender FROM applicants WHERE z IS NOT NULL AND noise IS NULL ORDER BY id")
+    await env.DB.prepare("SELECT id, z, gender FROM applicants WHERE z IS NOT NULL AND noise IS NULL AND test = 0 ORDER BY id")
       .all<{ id: number; z: string; gender: string | null }>()
   ).results;
   const index = new Map(faces.map((f, i) => [f.id, i]));
@@ -105,7 +110,9 @@ export async function raterModel(env: Env, rater: string, mode = "hills") {
   const loaded = await loadData(env, rater);
   if (!loaded) return null;
   let data = loaded;
-  const [key, variant] = ["line", "hills", "one"].includes(mode) ? ["1", mode] : [mode.split(":")[0], mode.split(":")[1] ?? "hills"];
+  // Same modes as the team view: "line" = the ranker's straight line, "1:line" = Model 1's.
+  const [key, variant] = mode === "line" ? [RANKER === "m1" ? "1" : RANKER, "line"]
+    : ["hills", "one"].includes(mode) ? ["1", mode] : [mode.split(":")[0], mode.split(":")[1] ?? "hills"];
   let Z = data.Z, peaks = data.peaks, pg = data.peakGroup;
   let teamHills: string | null, zs: Map<number, number[]> | undefined, init: { peaks: number[][]; peak_gender?: string[] } | undefined;
   if (key === "1") {
@@ -116,7 +123,7 @@ export async function raterModel(env: Env, rater: string, mode = "hills") {
     if (!alt.zs.size) {
       // A fixed rule: nothing to learn, so everyone keeps the rule's own score.
       const fixed = alt.fixed ?? {};
-      return { data, n: data.picks.length, pg: [], params: null, zs: undefined, init: undefined, fitted: true,
+      return { data, n: data.picks.length, pg: [], params: null, zs: undefined, init: undefined, fitted: true, rule: true,
         score: (i: number): number | null => fixed[data.faces[i].id] ?? null, hill: (_i: number): number | null => null };
     }
     zs = alt.zs; init = alt.init;
@@ -130,7 +137,7 @@ export async function raterModel(env: Env, rater: string, mode = "hills") {
   // The straight line also learns from "keduanya kurang menarik"; the hills don't.
   const n = variant === "line" ? data.used : data.picks.length;
   const team = teamHills ? hillsFrom(JSON.parse(teamHills)) : null;
-  const none = { data, n, pg: team?.pg ?? pg, params: teamHills, zs, init, fitted: false,
+  const none = { data, n, pg: team?.pg ?? pg, params: teamHills, zs, init, fitted: false, rule: false,
     score: (_i: number): number | null => null, hill: (_i: number): number | null => null };
   if (data.picks.length < MIN_PICKS) return none;
   const cacheKey = mode === "hills" ? rater : `${rater}\t${mode}`;
@@ -231,6 +238,31 @@ async function fitAlternates(
   return stmts;
 }
 
+// The ranker's taste space for these faces, or null when the ranker is
+// Model 1 or its model doesn't cover every face.
+async function rankerZ(env: Env, faces: { id: number }[]) {
+  if (RANKER === "m1") return null;
+  const alt = await loadAlternate(env, RANKER);
+  if (!alt || faces.some((f) => !alt.zs.has(f.id))) return null;
+  return faces.map((f) => alt.zs.get(f.id)!);
+}
+
+// The ranker's straight line and taste space, as last trained (for scoring
+// test faces and the rater table).
+export async function rankerLine(env: Env) {
+  if (RANKER !== "m1") {
+    const alt = await loadAlternate(env, RANKER);
+    if (alt?.paramsLine && alt.zs.size) return { line: arrowFrom(JSON.parse(alt.paramsLine)), zs: alt.zs };
+  }
+  const m = await env.DB.prepare("SELECT params_line FROM model WHERE id = 1").first<{ params_line: string | null }>();
+  if (!m?.params_line) return null;
+  const zs = new Map(
+    (await env.DB.prepare("SELECT id, z FROM applicants WHERE z IS NOT NULL").all<{ id: number; z: string }>())
+      .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
+  );
+  return { line: arrowFrom(JSON.parse(m.params_line)), zs };
+}
+
 export async function retrain(env: Env) {
   const data = await loadData(env);
   if (!data) return { status: "no taste space loaded yet" };
@@ -253,17 +285,21 @@ export async function retrain(env: Env) {
     heldoutOne = agreement(Z.map((z, i) => o.score(z, G[i])), test);
   }
   const one = oneHill(Z, G).fit(Z, picks, G);
-
-  // The ranker: the straight arrow on every pick from every rater. Std =
-  // spread of 3 bootstrap fits. The hills fit still names each cluster.
   const main = fresh().fit(Z, picks, G);
+  // Model 1's own line, kept as a comparison when another model ranks.
   const line = new Arrow(Z[0].length, nG).fit(Z, picks, 300, 0.05, 1e-2, below);
-  const scores = Z.map((z) => line.score(z));
+
+  // The ranker: the straight arrow on every pick from every rater, in the
+  // ranker's taste space (Model 1's if that model doesn't cover everyone).
+  // Std = spread of 3 bootstrap fits. Model 1's hills still name each cluster.
+  const Zr = await rankerZ(env, faces) ?? Z;
+  const ranker = Zr === Z ? line : new Arrow(Zr[0].length, nG).fit(Zr, picks, 300, 0.05, 1e-2, below);
+  const scores = Zr.map((z) => ranker.score(z));
   const hill = Z.map((z, i) => main.hill(z, G[i]));
   const runs = [0, 1, 2].map(() => {
     const boot = picks.map(() => picks[Math.floor(rand() * picks.length)]);
-    const b = new Arrow(Z[0].length, nG).fit(Z, boot, 150, 0.05, 1e-2, below);
-    const s = Z.map((z) => b.score(z));
+    const b = new Arrow(Zr[0].length, nG).fit(Zr, boot, 150, 0.05, 1e-2, below);
+    const s = Zr.map((z) => b.score(z));
     // Centre within each group: scores only compare inside a group.
     const mean = new Map<string | null, number>();
     for (const g of new Set(G)) {
@@ -283,8 +319,8 @@ export async function retrain(env: Env) {
   const pairs = groupedPairs(scores, std, nPairs, rand, hill, G);
   const stmts: D1PreparedStatement[] = faces.map((f, i) =>
     env.DB.prepare(
-      "UPDATE applicants SET score = ?1, score_std = ?2, look = ?3, model = 'line', updated_at = ?4 WHERE id = ?5",
-    ).bind(scores[i], std[i], hill[i], now, f.id),
+      "UPDATE applicants SET score = ?1, score_std = ?2, look = ?3, model = ?4, updated_at = ?5 WHERE id = ?6",
+    ).bind(scores[i], std[i], hill[i], Zr === Z ? "line" : `${RANKER}:line`, now, f.id),
   );
   // Every unanswered pair goes (repeats too: the next one is drawn when served), including ones on screen now: they were chosen
   // by the old model (and may predate a gender fix). Their picks still count.
@@ -318,13 +354,28 @@ export async function retrain(env: Env) {
 export async function raterAgreement(env: Env) {
   const all = await loadData(env);
   if (!all) return { raters: [], cross: [], same_pair: [] };
-  const team = await env.DB.prepare("SELECT params_line FROM model WHERE id = 1").first<{ params_line: string | null }>();
-  const teamModel = team?.params_line ? arrowFrom(JSON.parse(team.params_line)) : null;
-  const teamScores = teamModel ? all.Z.map((z) => teamModel.score(z)) : null;
-  const names = [...new Set(all.picks.map((p) => p.rater))].sort();
+  const team = await rankerLine(env);
+  const teamScores = team ? all.faces.map((f) => { const z = team.zs.get(f.id); return z ? team.line.score(z) : 0; }) : null;
+  // What each rater answered, skips and "neither" included, and how fast
+  // (2026-10-27: one rater answered "neither" 1,363 times in 34 minutes,
+  // ~1 s each, invisible in a table that only counted winners).
+  const { results: answered } = await env.DB.prepare(
+    `SELECT rater, SUM(winner_id IS NOT NULL) AS winners, SUM(tie) AS ties, SUM(neither) AS neither,
+       SUM(winner_id IS NULL AND tie = 0 AND neither = 0) AS skips FROM picks GROUP BY rater`,
+  ).all<{ rater: string; winners: number; ties: number; neither: number; skips: number }>();
+  const { results: times } = await env.DB.prepare(
+    `SELECT rater, ms FROM picks WHERE ms IS NOT NULL AND (winner_id IS NOT NULL OR tie = 1 OR neither = 1) ORDER BY rater, ms`,
+  ).all<{ rater: string; ms: number }>();
+  const median = (n: string) => {
+    const ms = times.filter((t) => t.rater === n).map((t) => t.ms);
+    return ms.length ? ms[Math.floor(ms.length / 2)] : null;
+  };
+  const counts = new Map(answered.map(({ rater, ...c }) => [rater, c]));
+  const names = [...new Set([...all.picks.map((p) => p.rater), ...answered.map((a) => a.rater)])].sort();
   const byRater = new Map(names.map((n) => [n, all.picks.filter((p) => p.rater === n)]));
   const models = new Map<string, number[] | null>();
   for (const n of names) {
+    if (!byRater.get(n)!.length) { models.set(n, null); continue; } // only skips or "neither"
     const m = await raterModel(env, n);
     models.set(n, m?.fitted ? all.Z.map((_, i) => m.score(i)!) : null);
   }
@@ -333,6 +384,8 @@ export async function raterAgreement(env: Env) {
     picks: byRater.get(n)!.length,
     team: teamScores ? agreement(teamScores, byRater.get(n)!) : null,
     own_model: models.get(n) !== null,
+    answers: counts.get(n) ?? { winners: 0, ties: 0, neither: 0, skips: 0 },
+    median_ms: median(n),
   }));
   const cross = names.flatMap((a) =>
     names.filter((b) => b !== a && models.get(a)).map((b) => ({

@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS applicants (
   gender     TEXT,                         -- 'f' cewek | 'm' cowok: groups battles and hills, never the score
   gender_src TEXT,                         -- 'auto' (zero-shot guess) | 'manual' (fixed on the scores page)
   noise      TEXT,                         -- bad photos (not a face, someone else): who marked it; NULL = fine
+  source     TEXT,                         -- where they came from: '2021' | '2026' | 'bc' (Lab "Sources" checklist)
+  test       INTEGER NOT NULL DEFAULT 0,   -- 1 = test batch: scored on the Lab only, never in battles or training
   updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS applicants_score ON applicants (score DESC);
@@ -84,7 +86,7 @@ CREATE TABLE IF NOT EXISTS model (
   active        TEXT,
   heldout_hills REAL,                      -- held-out agreement, hills model
   heldout_line  REAL,                      -- held-out agreement, straight arrow
-  params_line   TEXT,                      -- the straight arrow: the live ranker since 2026-10-22
+  params_line   TEXT,                      -- Model 1's straight arrow (the ranker 2026-10-22 to 10-27)
   params_one    TEXT,                      -- comparison model: one hill per group (cewek, cowok)
   heldout_one   REAL,                      -- held-out agreement, one hill per group
   n_test        INTEGER,
@@ -95,7 +97,8 @@ CREATE TABLE IF NOT EXISTS model (
 
 -- Comparison models on another embedding ("Model 2" on the scores page).
 -- Same people and picks as the main model, each in its own taste space
--- (alt_z, from pipeline sinemart.alt). Battles always use the main model.
+-- (alt_z, from pipeline sinemart.alt). The one named by RANKER in
+-- src/retrain.ts (Model 6 since 2026-10-27) ranks and picks the battles.
 CREATE TABLE IF NOT EXISTS alt_models (
   key        TEXT PRIMARY KEY,
   init       TEXT NOT NULL,

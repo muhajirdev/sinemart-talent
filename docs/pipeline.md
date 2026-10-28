@@ -112,6 +112,18 @@ from 2021, 651 from 2026).
   image), so 2026 photos are cropped with `--grid` (section 2).
 - Result: 651 people with at least one usable face.
 
+### "bc" test batch (2026-10-27)
+
+394 photos from an Instagram showcase account (one girl per post, carousel
+photos `_1`, `_2`…), R2 bucket `talent-applicant`, prefix `bc/` (expandra
+account), copied to `sinemart-talent/bc/`. One applicant per post, ids
+`900000 + post number` (by date), `stage = 'bc'`. Cropped without `--grid`;
+201 of 259 posts have a usable face (three crops of the account's cartoon
+logo were dropped by hand). They are a **model test only**: projected into
+the live taste space with `sinemart.project` (not re-published) and marked
+`test = 1` (`source = 'bc'`), so they never enter battles or training;
+the Lab shows them only when "bc" is ticked under Sources.
+
 ### Noise and duplicates
 
 Nothing is deleted. A bad person is marked in `applicants.noise` (the
@@ -209,7 +221,7 @@ summed and re-normalised to unit length. One odd photo then moves the
 person's position less, and people with a 2026 grid of 4–6 faces get a
 steadier vector.
 
-Model 1, the one that ranks, is **SigLIP 2 base**
+Model 1, the main taste space (it ranked until 2026-10-27; Model 6 ranks now), is **SigLIP 2 base**
 (`google/siglip2-base-patch16-224`, 768 numbers). The `MODELS` dict also
 holds the comparison models (section 11). ArcFace is the odd one out: it
 expects its own 112×112 face template, so `ARCFACE_BOX` cuts the matching
@@ -492,12 +504,12 @@ vector for get their gender's average. The Lab shows them only as
 
 | Lab name | Key | Embedding | Notes |
 |---|---|---|---|
-| Model 1 | (main) | SigLIP 2 base, 768 | the ranker |
+| Model 1 | (main) | SigLIP 2 base, 768 | the ranker until 2026-10-27; its hills name the clusters |
 | Model 2 | `m2` | DINOv2 base | stand-in for DINOv3, which is gated |
 | Model 3 | `m3` | FaRL (face CLIP, LAION-Face) | research / non-commercial weights |
 | Model 4 | `m4` | ArcFace (InsightFace buffalo_l) | face *recognition*; non-commercial weights |
 | Model 5 | `m5` | SigLIP 2 so400m | larger SigLIP 2 |
-| Model 6 | `m6` | OpenAI CLIP ViT-L/14 | |
+| Model 6 | `m6` | OpenAI CLIP ViT-L/14 | the ranker since 2026-10-27 (`RANKER` in `worker/src/retrain.ts`) |
 | Model 7 | `m7` | PE-Core-L-14-336 | |
 | Model 8 | `m8` | face parts on SigLIP 2 base, 3,072 | section 7 |
 | Golden ratio · straightened | `geo` | fixed rule | section 6 |
@@ -586,7 +598,8 @@ in the URL.
 - **Rater agreement.** Per rater: how well the team model predicts their
   picks; how well each other rater's personal model does; plain agreement
   where two raters judged the same pair; and the repeat ceiling per rater.
-- **Leaderboard.** Per gender, filter by cluster, "No battles yet (N)" for
+- **Leaderboard.** Per gender, a **Sources** checklist (2021, 2026, and test
+  batches like "bc", off by default; `?sources=2021,2026,bc`), filter by cluster, "No battles yet (N)" for
   people never in a decided battle. Opening a face shows all photos, the
   golden-ratio overlay on request, the battle history (who they met, the
   result, who judged, skips included) and "wrong? move to …".
@@ -615,7 +628,7 @@ caching. No bucket is public.
 
 | Table | One row per | Written by | Holds |
 |---|---|---|---|
-| `applicants` | person | `publish.py`; retrain; gender/noise endpoints | crop key, stage, taste-space `z`, `look`, `score`, `score_std`, `gender`, `gender_src`, `noise` |
+| `applicants` | person | `publish.py`; retrain; gender/noise endpoints | crop key, stage, taste-space `z`, `look`, `score`, `score_std`, `gender`, `gender_src`, `noise`, `source` (2021 / 2026 / bc), `test` (1 = test batch, never picked) |
 | `photos` | whole photo | `publish.py` | viewing order, kind, R2 key, whether its face counted |
 | `raters` | rater | `/api/login` | token, name |
 | `picks` | answer | `/api/pick`, `/api/undo` | rater, both ids, winner / tie / neither, kind, ms, time |
@@ -659,7 +672,7 @@ and FaRL ~8. If that holds:
 | Embedding | the vector a frozen image model gives a crop; per person, the average |
 | Taste space | 16 whitened principal directions of the embeddings; each person's `z` |
 | Look / cluster / hill | a k-means group of similar faces within one gender |
-| Straight line / Arrow | Model 1's ranker, score = `w · z` |
+| Straight line / Arrow | the ranker (on Model 6 since 2026-10-27), score = `w · z` |
 | Decided pick | winner, tie or neither (not a skip) |
 | Held-out agreement | share of decisive picks about unseen people the model orders right |
 | Repeat | a pair re-asked of the same rater with sides swapped, not trained, used for the ceiling |

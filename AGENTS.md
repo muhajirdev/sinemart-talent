@@ -26,18 +26,19 @@ often writes Indonesian, so reply in the language he uses.
   not deploy.
 - Bulk D1 writes on live data (marking duplicates, moving picks, reloading a
   model, schema changes).
-- Changing what ranks or picks battles (the straight line, Model 1). The rule:
-  switch only if another model beats the line by >5 points held-out at
-  ~1,000 picks.
+- Changing what ranks or picks battles (the straight line on Model 6 since
+  2026-10-27, `RANKER` in `worker/src/retrain.ts`). The rule: switch only if
+  another model beats it by >5 points held-out.
 - New pages, buttons, steps or flows. Propose them before building; confirm
   your reading of his idea against his actual words.
 
 ## How to work
 
-- Branch from the default branch `claude/project-thread-60dxh0`, open a PR
+- Branch from the default branch `main`, open a PR
   there, merge when tests pass.
-- Before pushing: `cd pipeline && python -m pytest -q` and
-  `cd worker && npx tsc --noEmit`.
+- Before pushing: `cd pipeline && python -m pytest -q`,
+  `cd worker && npx tsc --noEmit` and (if `scorer/` changed)
+  `cd scorer && npm run typecheck`.
 - Write code like the surrounding code: short plain-English comments that say
   *why*, dated when they record a decision ("2026-10-22: …").
 - Keep `worker/schema.sql` (fresh database) and `worker/migrate.sql` (dated

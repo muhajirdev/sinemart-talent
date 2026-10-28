@@ -1,0 +1,24 @@
+/* Same palette as the Lab (worker/public/results.html). */
+:root { --bg: #202020; --card: #2b2b2b; --fg: #f2f2f2; --muted: #9a9a9a; --accent: #f5c242; --good: #7bd88f; --bad: #ff8a80; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 24px; margin: 0 0 4px; }
+.note { color: var(--muted); font-size: 14px; margin: 6px 0; }
+.card { background: var(--card); border-radius: 14px; padding: 16px; margin: 16px 0; }
+label { display: block; font-size: 14px; color: var(--muted); margin: 10px 0 6px; }
+input[type="text"], select { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #444; background: #1a1a1a; color: var(--fg); font-size: 16px; }
+input[type="file"] { width: 100%; color: var(--muted); }
+button { background: var(--accent); color: #111; border: 0; border-radius: 999px; padding: 10px 20px; font-weight: 600; font-size: 16px; cursor: pointer; margin-top: 14px; }
+button:disabled { opacity: 0.5; cursor: wait; }
+button.link { background: none; color: var(--muted); padding: 0; margin: 0; font-weight: 400; font-size: 14px; text-decoration: underline; }
+.err { color: var(--bad); }
+.faces { display: flex; flex-wrap: wrap; gap: 10px; }
+.face { width: 112px; text-align: center; font-size: 12px; color: var(--muted); }
+.face img { width: 112px; height: 112px; object-fit: cover; border-radius: 10px; display: block; border: 2px solid transparent; }
+.face.ok img { border-color: var(--good); }
+.face.bad img { border-color: var(--bad); opacity: 0.7; }
+.models { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.score { font-size: 48px; font-weight: 700; line-height: 1; }
+.bar { height: 8px; background: #444; border-radius: 4px; margin: 10px 0; }
+.bar i { display: block; height: 100%; background: var(--good); border-radius: 4px; }
