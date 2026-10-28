@@ -63,7 +63,8 @@
   .contrast img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; background: #808080; display: block; }
   .contrast figcaption { position: absolute; left: 4px; top: 4px; background: #000b; border-radius: 999px; padding: 0 6px; font-size: 11px; }
   .contrast .low img { outline: 2px solid #ff8a8066; }
-  #mapd summary { cursor: pointer; }
+  #mapd summary, #agreed summary { cursor: pointer; }
+  #agreed[open] summary { margin-bottom: 8px; }
   #mapd[open] summary { margin-bottom: 8px; }
   select { background: var(--card); color: var(--fg); border: 1px solid #555; border-radius: 10px; padding: 8px 10px; font-size: 15px; max-width: 100%; }
   .switch { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
@@ -72,21 +73,37 @@
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #3a3a3a; }
   th { color: var(--muted); font-weight: 500; font-size: 13px; }
   .scroll { overflow-x: auto; }
-  .lb { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.97); display: flex; flex-direction: column;
-    align-items: center; justify-content: safe center; padding: 16px; touch-action: pan-y; overflow-y: auto; }
-  .lb .hist { width: min(92vw, 640px); margin-top: 14px; color: #ddd; font-size: 13px; }
+  /* 2026-10-28 (Muajir): a person opens in a panel on the right, so the
+     leaderboard stays in view and tapping another row just swaps the panel.
+     Full width on phones. */
+  .lb { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; width: min(100vw, 460px); background: #161616;
+    border-left: 1px solid #3a3a3a; box-shadow: -8px 0 24px #0008; display: flex; flex-direction: column;
+    align-items: stretch; padding: calc(12px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+    overflow-y: auto; overscroll-behavior: contain; animation: lbIn .18s ease-out; }
+  @keyframes lbIn { from { transform: translateX(40px); opacity: 0; } }
+  @media (min-width: 1240px) { body.side { margin-right: 476px; margin-left: max(16px, calc((100vw - 476px - 760px) / 2)); } }
+  #faces li.sel { outline: 2px solid var(--accent); }
+  .lb .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .lb .top h2 { margin: 0; }
+  .lb .hist { width: 100%; margin-top: 16px; color: #ddd; font-size: 13px; border-top: 1px solid #333; padding-top: 12px; }
   .lb .hist h3 { font-size: 14px; margin: 0 0 6px; }
   .lb .hist ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-  .lb .hist li { display: flex; align-items: center; gap: 8px; }
+  .lb .hist li { display: flex; align-items: center; gap: 8px; background: none; padding: 0; margin: 0; border-radius: 0; }
   .lb .hist li.skip { opacity: .5; }
   .lb .hist .label { color: #999; }
+  .lb #lbRater { border-top: 0; margin-top: 0; padding-top: 0; }
+  .lb #lbRater li { align-items: flex-start; padding: 6px 0; border-bottom: 1px solid #2a2a2a; }
+  .lb #lbRater .pair { display: flex; gap: 4px; flex: none; }
+  .lb #lbRater .pair img { width: 48px; height: 48px; outline: 2px solid transparent; outline-offset: -2px; }
+  .lb #lbRater .pair img.w { outline-color: #7bd88f; } .lb #lbRater .pair img.n { outline-color: #ff8a8099; }
+  .rname { all: unset; cursor: pointer; color: var(--accent); }
   .lb .hist img { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; cursor: pointer; }
   .lb .hist b.won { color: #7bd88f; } .lb .hist b.lost { color: #ff8a80; }
   .lb[hidden] { display: none; }
-  .lb .stage { position: relative; width: min(92vw, 640px); height: min(70vh, 720px); display: flex; align-items: center; justify-content: center; }
+  .lb .stage { position: relative; width: 100%; height: min(58vh, 560px); flex: none; display: flex; align-items: center; justify-content: center; background: #0d0d0d; border-radius: 10px; }
   .lb .stage img { width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
   .lb #lbPhi, .lb #lbPhi svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  .lb .phiBox { margin-top: 10px; text-align: center; color: #ddd; font-size: 13px; max-width: 640px; }
+  .lb .phiBox { margin-top: 10px; text-align: center; color: #ddd; font-size: 13px; }
   .lb .phiBox button { all: unset; cursor: pointer; color: var(--accent); font-weight: 600; font-size: 14px; }
   .lb .phiBox button[aria-pressed="true"] { text-decoration: underline; }
   .lb #lbPhiList { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: center; margin-top: 6px; }
@@ -96,9 +113,9 @@
   .lb .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%; border: 0;
     background: rgba(255,255,255,.15); color: #fff; font-size: 26px; cursor: pointer; }
   .lb .prev { left: 4px; } .lb .next { right: 4px; }
-  .lb .close { position: absolute; top: 12px; right: 12px; width: 44px; height: 44px; border-radius: 50%; border: 0;
+  .lb .close { flex: none; width: 40px; height: 40px; padding: 0; border-radius: 50%; border: 0;
     background: rgba(255,255,255,.15); color: #fff; font-size: 22px; cursor: pointer; }
-  .lb .cap { color: #eee; margin-top: 12px; text-align: center; font-size: 14px; line-height: 1.5; }
+  .lb .cap { color: #eee; margin-top: 10px; text-align: center; font-size: 14px; line-height: 1.5; }
   .lb .cap .label { color: #aaa; font-size: 13px; }
   .lb .dots { display: flex; gap: 6px; justify-content: center; margin-top: 8px; }
   .lb .dots i { width: 7px; height: 7px; border-radius: 50%; background: #666; }
@@ -120,6 +137,7 @@
 <div class="chips" id="csw" hidden>
   <button data-c="line" aria-pressed="true">Straight line</button><button data-c="many" aria-pressed="false">Many clusters</button><button data-c="one" aria-pressed="false">One cluster</button>
 </div>
+<div class="chips" id="rsw" hidden></div>
 <div class="switch" id="switch" hidden>
   <label for="who">Taste of</label>
   <select id="who"><option value="">All raters (team model)</option></select>
@@ -142,15 +160,18 @@
 <div class="chips" id="srcs"></div>
 <div class="chips" id="chips"></div>
 <ol id="faces"></ol>
-<div class="lb" id="lb" hidden role="dialog" aria-modal="true" aria-label="Candidate photos">
-  <button class="close" id="lbClose" aria-label="Close">✕</button>
+<aside class="lb" id="lb" hidden role="dialog" aria-label="Candidate details">
+  <div class="top"><h2 id="lbTitle"></h2><button class="close" id="lbClose" aria-label="Close">✕</button></div>
+  <div id="lbPerson">
   <div class="stage"><img id="lbImg" alt=""><div id="lbPhi"></div><button class="nav prev" id="lbPrev" aria-label="Previous photo">‹</button>
     <button class="nav next" id="lbNext" aria-label="Next photo">›</button></div>
   <div class="dots" id="lbDots"></div>
   <div class="cap" id="lbCap"></div>
   <div class="phiBox"><button id="lbPhiBtn" aria-pressed="false">Show golden ratio</button><div id="lbPhiList"></div></div>
   <div class="hist" id="lbHist"></div>
-</div>
+  </div>
+  <div class="hist" id="lbRater" hidden></div>
+</aside>
 <script src="/phi.js"></script>
 <script>
 (() => {
@@ -196,6 +217,11 @@
         <div class="stat"><b>${pct(state.ranker === "m1" ? m.heldout_line : (m.alternates || []).find((a) => a.key === state.ranker)?.heldout_line)}</b><span>${rankerName(m.alternates)} straight line (ranks everyone, picks the battles): held-out agreement</span></div>
         <div class="stat" id="ceil"><b>–</b><span>Raters repeating their own pick (no repeats yet)</span></div>
       </div>
+      ${m.without ? `<div class="card" style="background:#3a3320;margin:12px 0 0;padding:10px 12px">
+        <b>Preview without ${m.without.raters.map(esc).join(", ")}</b> (${m.without.picks_out} picks${m.without.neither_out ? ` and ${m.without.neither_out} "neither"` : ""} left out).
+        Scores below are retrained on the other raters only. Held-out on the remaining raters' picks
+        (~${m.without.n_test} per split, ${m.without.splits} splits): <b>${pct(m.without.heldout_with)}</b> with everyone →
+        <b>${pct(m.without.heldout_without)}</b> without. Under ~5 points is noise. Battles and the live ranking don't change.</div>` : ""}
       <table class="cmp"><thead><tr><th>Held-out agreement</th><th>Straight line</th><th>Many clusters</th><th>One cluster</th></tr></thead><tbody>
         ${[["Model 1", m.heldout_line, m.heldout_hills, m.heldout_one, "m1"], ...(m.alternates || []).filter((a) => a.has_z).map((a) => [altName(a.key, m.alternates), a.heldout_line, a.heldout, a.heldout_one, a.key])]
           .map(([n, l, a, b, k]) => [k === state.ranker ? `${n} (ranks)` : n, l, a, b])
@@ -238,6 +264,8 @@
   if (qs.get("rater")) state.rater = qs.get("rater");
   if (qs.get("cluster")) state.filter = qs.get("cluster");
   state.fresh = qs.get("battles") === "none";
+  // Raters unticked in the "Raters:" checklist (a preview, see renderRaterChecks).
+  state.without = new Set((qs.get("without") || "").split(",").filter(Boolean));
   // Sources shown on the leaderboard; null = the default (every applicant
   // source, no test batches).
   state.sources = qs.get("sources") ? new Set(qs.get("sources").split(",")) : null;
@@ -249,6 +277,7 @@
     if (state.filter !== "all") p.set("cluster", state.filter);
     if (state.fresh) p.set("battles", "none");
     if (state.sources) p.set("sources", [...state.sources].join(","));
+    if (state.without.size) p.set("without", [...state.without].join(","));
     history.replaceState(null, "", location.pathname + (p.size ? "?" + p : ""));
   }
   // Hills are numbered and coloured within their group (cewek / cowok).
@@ -355,6 +384,7 @@
         body: JSON.stringify({ id: Number(b.dataset.id), gender: b.dataset.g }) });
       setTimeout(load, 1500);
     }));
+    markSel();
     // Tap a row to open that person with all their photos.
     $("faces").querySelectorAll("li").forEach((li) => (li.onclick = (e) => {
       if (!e.target.closest(".gfix")) openBox(Number(li.id.slice(1)));
@@ -392,11 +422,15 @@
     const list = state.d.faces, i = list.findIndex((f) => f.id === id);
     const f = list[i];
     if (!f) return;
+    $("lbPerson").hidden = false; $("lbRater").hidden = true; lb.rater = null;
     Object.assign(lb, { id, v: 0, n: (f.n_photos || 0) + 1, f, rank: f.score == null ? null : i + 1, points: undefined, only: null });
     api(`/api/points/${id}`).then((r) => r.json()).then((p) => { if (lb.id === id) { lb.points = p; drawBoxPhi(); } }).catch(() => {});
     // Load every photo now so flipping never waits.
     for (let k = 0; k < lb.n; k++) new Image().src = boxUrl(k);
     $("lb").hidden = false;
+    document.body.classList.add("side");
+    markSel();
+    $("lb").scrollTop = 0;
     showBox();
     loadHistory(id);
   }
@@ -413,12 +447,43 @@
     $("lbHist").innerHTML = `<h3>Battle history · ${decided} decided, ${rows.length - decided} skipped</h3>` + (rows.length
       ? `<ol>${rows.map((b) => `<li class="${b.result}"><b class="${b.result}">${word[b.result]}</b> vs
           <img src="/img/${b.other}?t=${encodeURIComponent(token)}" alt="#${b.other}" loading="lazy" data-id="${b.other}">
-          <span>#${b.other} · ${esc(b.rater)}${b.repeat ? " · repeat" : ""}
+          <span>#${b.other} · <button class="rname" data-name="${esc(b.rater)}">${esc(b.rater)}</button>${b.repeat ? " · repeat" : ""}
           <span class="label">· ${new Date(b.created_at.replace(" ", "T") + "Z").toLocaleString()}</span></span></li>`).join("")}</ol>`
       : `<p class="label">No battles yet.</p>`);
     $("lbHist").querySelectorAll("img").forEach((im) => (im.onclick = () => {
       const other = Number(im.dataset.id);
       if (state.d.faces.some((f) => f.id === other)) openBox(other);
+    }));
+    $("lbHist").querySelectorAll(".rname").forEach((b) => (b.onclick = () => openRater(b.dataset.name)));
+  }
+
+  // 2026-10-28 (Muajir): tap a rater's name to see their picks in the same
+  // panel, newest first. Green ring = the face they picked; red = "neither".
+  async function openRater(name) {
+    Object.assign(lb, { id: null, rater: name });
+    $("lbPerson").hidden = true; $("lbRater").hidden = false;
+    $("lb").hidden = false; document.body.classList.add("side"); markSel();
+    $("lbTitle").textContent = name;
+    $("lbRater").innerHTML = '<p class="label">Loading…</p>';
+    $("lb").scrollTop = 0;
+    const r = await api(`/api/rater-picks?name=${encodeURIComponent(name)}`);
+    if (!r.ok || lb.rater !== name) return;
+    const { counts: c, rows } = await r.json();
+    const t = (x) => `<img src="/img/${x}?t=${encodeURIComponent(token)}" alt="#${x}" loading="lazy" data-id="${x}"`;
+    const what = (p) => p.winner_id != null ? `Picked <b class="won">#${p.winner_id}</b> over #${p.winner_id === p.left_id ? p.right_id : p.left_id}`
+      : p.tie ? `<b>Sama saja</b> · #${p.left_id} & #${p.right_id}` : p.neither ? `<b class="lost">Keduanya kurang menarik</b> · #${p.left_id} & #${p.right_id}`
+      : `Skipped · #${p.left_id} & #${p.right_id}`;
+    const cls = (p, x) => p.winner_id === x ? "w" : p.neither ? "n" : "";
+    $("lbRater").innerHTML = `<h3>Pick history · ${c?.total || 0} answers: ${c?.picked || 0} picked, ${c?.ties || 0} sama saja,
+      ${c?.neither || 0} neither, ${(c?.total || 0) - (c?.picked || 0) - (c?.ties || 0) - (c?.neither || 0)} skipped</h3>`
+      + (rows.length ? `<ol>${rows.map((p) => `<li class="${p.winner_id == null && !p.tie && !p.neither ? "skip" : ""}">
+          <span class="pair">${t(p.left_id)} class="${cls(p, p.left_id)}">${t(p.right_id)} class="${cls(p, p.right_id)}"></span>
+          <span>${what(p)}${p.repeat ? " · repeat" : ""}<br><span class="label">${p.ms == null ? "" : `${(p.ms / 1000).toFixed(1)} s · `}${new Date(p.created_at.replace(" ", "T") + "Z").toLocaleString()}</span></span></li>`).join("")}</ol>
+        ${c?.total > rows.length ? `<p class="label">Showing the newest ${rows.length}.</p>` : ""}`
+      : `<p class="label">No picks yet.</p>`);
+    $("lbRater").querySelectorAll("img").forEach((im) => (im.onclick = () => {
+      const id = Number(im.dataset.id);
+      if (state.d.faces.some((f) => f.id === id)) openBox(id);
     }));
   }
   const boxUrl = (k) => `/img/${lb.id}${k ? "/" + (k - 1) : ""}?t=${encodeURIComponent(token)}`;
@@ -428,7 +493,8 @@
     $("lbImg").alt = `Applicant ${f.id}, photo ${lb.v + 1}`;
     $("lbPrev").hidden = $("lbNext").hidden = lb.n < 2;
     $("lbDots").innerHTML = lb.n < 2 ? "" : Array.from({ length: lb.n }, (_, k) => `<i class="${k === lb.v ? "on" : ""}"></i>`).join("");
-    $("lbCap").innerHTML = `<b>#${f.id}</b> · ${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${lb.rank}`}
+    $("lbTitle").textContent = `#${f.id}`;
+    $("lbCap").innerHTML = `${beat == null ? "not scored" : `score ${Math.round(beat * 100)} · rank ${lb.rank}`}
       · ${f.look == null ? "no cluster" : hn(f.look)}<br>${battles(f)}${certainty(f)}<br>${geoLine(f)}
       <div class="label">${lb.v === 0 ? "Face" : `Photo ${lb.v} of ${lb.n - 1}`}</div>`;
     drawBoxPhi();
@@ -454,14 +520,16 @@
   }
   $("lbPhiBtn").onclick = () => { phiOn = !phiOn; try { localStorage.setItem("phi", phiOn ? "1" : "0"); } catch (_) {} drawBoxPhi(); };
   const flipBox = (step) => { if (lb.n > 1) { lb.v = (lb.v + step + lb.n) % lb.n; showBox(); } };
-  const closeBox = () => { $("lb").hidden = true; lb.id = null; };
+  const closeBox = () => { $("lb").hidden = true; lb.id = lb.rater = null; document.body.classList.remove("side"); markSel(); };
+  // Ring the open person's row on the leaderboard.
+  const markSel = () => $("faces").querySelectorAll("li").forEach((li) => li.classList.toggle("sel", li.id === `f${lb.id}`));
   $("lbPrev").onclick = (e) => { e.stopPropagation(); flipBox(-1); };
   $("lbNext").onclick = (e) => { e.stopPropagation(); flipBox(1); };
   $("lbClose").onclick = closeBox;
-  $("lb").onclick = (e) => { if (e.target === $("lb")) closeBox(); };
   addEventListener("keydown", (e) => {
-    if (lb.id == null) return;
+    if ((lb.id == null && !lb.rater) || e.target.closest("input, select, textarea")) return;
     if (e.key === "Escape") closeBox();
+    else if (lb.id == null) return;
     else if (e.key === "ArrowLeft") flipBox(-1);
     else if (e.key === "ArrowRight") flipBox(1);
   });
@@ -625,10 +693,12 @@
     };
     const cross = new Map(a.cross.map((c) => [`${c.model}|${c.picks_of}`, c]));
     $("agree").hidden = false;
-    $("agree").innerHTML = `<h2>Rater agreement</h2>
+    // 2026-10-28 (Muajir): closed by default; stays open across reloads once opened.
+    const open = !!$("agreed")?.open;
+    $("agree").innerHTML = `<details id="agreed"${open ? " open" : ""}><summary><h2 style="display:inline">Rater agreement</h2></summary>
       <div class="scroll"><table>
         <tr><th>Rater</th><th>Answers</th><th>Team model agrees</th>${names.length > 1 ? names.map((n) => `<th>${esc(n)}'s taste predicts</th>`).join("") : ""}</tr>
-        ${a.raters.map((r) => `<tr><td>${esc(r.name)}</td><td>${answers(r)}</td><td>${cell(r.team, r.picks)}</td>
+        ${a.raters.map((r) => `<tr><td><button class="rname" data-name="${esc(r.name)}">${esc(r.name)}</button></td><td>${answers(r)}</td><td>${cell(r.team, r.picks)}</td>
           ${names.length > 1 ? names.map((m) => {
             if (m === r.name) return "<td class='meta'>·</td>";
             const c = cross.get(`${m}|${r.name}`);
@@ -643,7 +713,27 @@
         with a picked face (the "/N" after each %). "Team model agrees" = how many of their picks the all-raters ranking
         gets right (it learned from them, so this runs high). "X's taste predicts" = how many of that row's picks X's
         personal model gets right. 50% is a coin flip; near 100% means the two see beauty the same way.
-        ${names.length < 2 ? "A second rater is needed to compare people." : ""}</p>`;
+        ${names.length < 2 ? "A second rater is needed to compare people." : ""} Tap a name to see their picks.</p>
+</details>`;
+    $("agree").querySelectorAll(".rname").forEach((b) => (b.onclick = () => openRater(b.dataset.name)));
+    renderRaterChecks(names);
+  }
+
+  // 2026-10-28 (Muajir: "option to exclude a rater, I wanna see if anyone
+  // introduced lots of noise ... it should be like a checklist"). Untick a
+  // rater to preview the ranking without their answers. Nothing is saved:
+  // battles and the live ranking stay as they are.
+  function renderRaterChecks(names) {
+    const box = $("rsw"), ranks = state.mode === "line" || state.mode === `${state.ranker}:line`;
+    box.hidden = !!state.rater || !ranks || names.length < 2;
+    if (box.hidden) return;
+    box.innerHTML = `<span class="meta" style="align-self:center">Raters:</span>` + names.map((n) =>
+      `<label class="meta" style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-name="${esc(n)}" ${state.without.has(n) ? "" : "checked"}>
+        ${esc(n)}</label>`).join("");
+    box.querySelectorAll("input").forEach((c) => (c.onchange = () => {
+      state.without = new Set([...box.querySelectorAll("input:not(:checked)")].map((x) => x.dataset.name));
+      load();
+    }));
   }
 
   async function load() {
@@ -656,7 +746,9 @@
     // The scores come first; the agreement table and the map (hundreds of face
     // images, inside a closed section) must not hold them up.
     const ar = api("/api/raters");
-    const r = await api("/api/results" + q + mq);
+    const wq = state.without.size && !state.rater ? `${q || mq ? "&" : "?"}without=${encodeURIComponent([...state.without].join(","))}` : "";
+    if (wq) { $("msg").hidden = false; $("msg").textContent = `Retraining without ${[...state.without].join(", ")}…`; }
+    const r = await api("/api/results" + q + mq + wq);
     if (r.status === 401) { $("msg").innerHTML = '<a href="/">Sign in on the picking page first</a>.'; return; }
     const data = await r.json();
     state.pg = data.model?.peak_gender || [];

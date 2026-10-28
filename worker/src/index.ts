@@ -4,7 +4,7 @@
 
 import { territory } from "./map";
 import {
-  ANSWERED, MIN_PICKS, RANKER, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, rankerLine, raterAgreement, raterModel, retrain,
+  ANSWERED, MIN_PICKS, RANKER, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, rankerLine, raterAgreement, raterModel, retrain, withoutRaters,
 } from "./retrain";
 
 export interface Env {
@@ -233,7 +233,7 @@ async function geometryPercentiles(env: Env) {
   return out;
 }
 
-async function results(env: Env, who: string | null, mode: string | null = null) {
+async function results(env: Env, who: string | null, mode: string | null = null, without: string[] = []) {
   if (who) return raterResults(env, who, mode);
   const model = await env.DB.prepare(
     `SELECT active, heldout_hills, heldout_one, heldout_line, n_test, split_by, n_picks, trained_at, init, params, params_one
@@ -263,6 +263,7 @@ async function results(env: Env, who: string | null, mode: string | null = null)
     delete f.z;
   }
   let peakGender: (string | null)[] | null = null;
+  let preview: unknown = null;
   if (mode === "1:line") {
     // Model 1's own straight line, a comparison once another model ranks.
     const p = (await env.DB.prepare("SELECT params_line FROM model WHERE id = 1").first<{ params_line: string | null }>())?.params_line;
@@ -317,13 +318,25 @@ async function results(env: Env, who: string | null, mode: string | null = null)
     }
     faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
   }
+  if (without.length && (!mode || mode === "line" || mode === `${RANKER}:line`)) {
+    // Preview of the ranker with some raters left out (the Lab's rater
+    // checklist). Clusters stay as they are; only the scores change.
+    const w = await withoutRaters(env, without);
+    for (const f of faces) {
+      const z = w?.zs.get(f.id as number);
+      f.score = w?.line && z ? w.line.score(z) : null;
+      f.score_std = null;
+    }
+    faces.sort((a, b) => ((b.score as number) ?? -Infinity) - ((a.score as number) ?? -Infinity));
+    preview = w?.summary ?? null;
+  }
   const init = model?.init ? JSON.parse(model.init as string) : null;
   if (model) delete model.init;
   return json({
     model: {
       ...model, mode: mode ?? "line", ranker: RANKER, hills: init?.peaks?.length ?? 0, alternates,
       peak_gender: peakGender ?? init?.peak_gender ?? [],
-      retrain_every: RETRAIN_EVERY,
+      retrain_every: RETRAIN_EVERY, without: preview,
     },
     picks,
     faces,
@@ -445,6 +458,22 @@ async function battleHistory(env: Env, id: number) {
   return results;
 }
 
+// 2026-10-28 (Muajir): one rater's pick history, newest first, for the side
+// panel on the Lab page: both faces, what they answered and how fast.
+async function raterHistory(env: Env, name: string) {
+  const [{ results }, counts] = await Promise.all([
+    env.DB.prepare(
+      `SELECT left_id, right_id, winner_id, tie, neither, kind = 'repeat' AS repeat, ms, created_at
+       FROM picks WHERE rater = ?1 ORDER BY id DESC LIMIT 200`,
+    ).bind(name).all(),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS total, SUM(winner_id IS NOT NULL) AS picked, SUM(tie) AS ties, SUM(neither) AS neither
+       FROM picks WHERE rater = ?1`,
+    ).bind(name).first(),
+  ]);
+  return { counts, rows: results };
+}
+
 async function exportPicks(env: Env) {
   // For the trainer: one line per decided pick (skips dropped).
   const { results } = await env.DB.prepare(
@@ -474,6 +503,7 @@ export default {
     if (url.pathname === "/api/geometry") return json(await geometryPercentiles(env));
     const bh = url.pathname.match(/^\/api\/battles\/(\d+)$/);
     if (bh) return json(await battleHistory(env, Number(bh[1])));
+    if (url.pathname === "/api/rater-picks") return json(await raterHistory(env, url.searchParams.get("name") ?? ""));
     const fp = url.pathname.match(/^\/api\/points\/(\d+)$/);
     if (fp) return json(await facePoints(env, Number(fp[1])));
     if (url.pathname === "/api/me") {
@@ -490,7 +520,8 @@ export default {
     const mode = url.searchParams.get("mode");
     if (url.pathname === "/api/results" && req.method === "GET") {
       await retrainIfStale(env);
-      return results(env, only, mode);
+      const without = (url.searchParams.get("without") ?? "").split(",").filter(Boolean);
+      return results(env, only, mode, without);
     }
     if (url.pathname === "/api/map" && req.method === "GET") {
       const gender = url.searchParams.get("gender");
