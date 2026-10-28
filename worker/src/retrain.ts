@@ -251,10 +251,14 @@ async function rankerZ(env: Env, faces: { id: number }[]) {
   return faces.map((f) => alt.zs.get(f.id)!);
 }
 
-// The ranker's full-size vectors (full_z), by applicant id.
-async function loadFull(env: Env) {
+// The ranker's full-size vectors (full_z), by applicant id. ~6 KB each, so
+// the Lab asks only for test faces (the only ones it re-scores).
+async function loadFull(env: Env, testOnly = false) {
+  const sql = testOnly
+    ? "SELECT f.applicant_id AS id, f.z FROM full_z f JOIN applicants a ON a.id = f.applicant_id WHERE f.key = ?1 AND a.test = 1"
+    : "SELECT applicant_id AS id, z FROM full_z WHERE key = ?1";
   return new Map(
-    (await env.DB.prepare("SELECT applicant_id AS id, z FROM full_z WHERE key = ?1").bind(RANKER).all<{ id: number; z: string }>())
+    (await env.DB.prepare(sql).bind(RANKER).all<{ id: number; z: string }>())
       .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
   );
 }
@@ -269,10 +273,10 @@ async function rankerFull(env: Env, faces: { id: number }[]) {
 // How the live ranker scores anyone by applicant id, as last trained: the
 // full-size line plus corrections when that's what ranks (people with no
 // battles, like test faces, get no correction), else the 16-number line.
-export async function rankerScorer(env: Env): Promise<((id: number) => number | null) | null> {
+export async function rankerScorer(env: Env, testOnly = false): Promise<((id: number) => number | null) | null> {
   const p = (await env.DB.prepare("SELECT params_ranker FROM model WHERE id = 1").first<{ params_ranker: string | null }>())?.params_ranker;
   if (p) {
-    const full = await loadFull(env), f = fullFrom(JSON.parse(p));
+    const full = await loadFull(env, testOnly), f = fullFrom(JSON.parse(p));
     if (full.size) return (id) => { const x = full.get(id); return x ? f.score(id, x) : null; };
   }
   const rl = await rankerLine(env);

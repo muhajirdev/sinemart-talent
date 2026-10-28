@@ -257,7 +257,7 @@ async function results(env: Env, who: string | null, mode: string | null = null,
   ).all<Record<string, unknown>>();
   // Retrains never touch test faces, so their stored score is from load
   // time: score them with the ranker's current straight line instead.
-  const rs = await rankerScorer(env);
+  const rs = await rankerScorer(env, true);
   for (const f of faces) {
     if (f.test) f.score = rs ? rs(f.id as number) : null;
     delete f.z;
