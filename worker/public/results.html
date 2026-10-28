@@ -228,7 +228,7 @@
           ? `${esc(d.rater)} needs ${m.min_picks} picks before a personal model can be trained.`
           : isRule(m.mode, m.alternates)
           ? `A fixed rule learns nothing from picks, so ${esc(d.rater)}'s view is the same as everyone's.`
-          : `Scores below come only from ${esc(d.rater)}'s picks: this is one person's taste. The team model (all raters) is what drives the pairs.`}</p>`;
+          : `Scores, wins, battles and Elo below come only from ${esc(d.rater)}'s picks: this is one person's taste, shown on the team ranking's spread so 0–100 reads the same. The team model (all raters) is what drives the pairs. Tap a person to see ${esc(d.rater)}'s battles for them (or everyone's).`}</p>`;
       state.d = d; state.mean = mean;
       renderBoard();
       $("msg").hidden = true;
@@ -475,15 +475,27 @@
     $("lbHist").innerHTML = "";
     const r = await api(`/api/battles/${id}`);
     if (!r.ok || lb.id !== id) return;
-    const rows = await r.json();
+    lb.hist = await r.json();
+    lb.histAll = !state.rater;
+    drawHistory();
+  }
+  // 2026-10-28 (Muajir): with "Taste of" a rater, show that rater's battles
+  // for this person first; one tap shows everyone's.
+  function drawHistory() {
     const word = { won: "Won", lost: "Lost", tie: "Sama saja", neither: "Keduanya kurang menarik", skip: "Skipped" };
+    const all = lb.hist || [], mine = all.filter((b) => b.rater === state.rater);
+    const rows = state.rater && !lb.histAll ? mine : all;
     const decided = rows.filter((b) => b.result !== "skip").length;
-    $("lbHist").innerHTML = `<h3>Battle history · ${decided} decided, ${rows.length - decided} skipped</h3>` + (rows.length
+    const sw = state.rater ? `<div class="chips" style="margin:0 0 8px">
+        <button data-h="mine" aria-pressed="${!lb.histAll}">${esc(state.rater)} (${mine.length})</button>
+        <button data-h="all" aria-pressed="${lb.histAll}">Everyone (${all.length})</button></div>` : "";
+    $("lbHist").innerHTML = `<h3>Battle history${state.rater && !lb.histAll ? ` by ${esc(state.rater)}` : ""} · ${decided} decided, ${rows.length - decided} skipped</h3>` + sw + (rows.length
       ? `<ol>${rows.map((b) => `<li class="${b.result}"><b class="${b.result}">${word[b.result]}</b> vs
           <img src="/img/${b.other}?t=${encodeURIComponent(token)}" alt="#${b.other}" loading="lazy" data-id="${b.other}">
           <span>#${b.other} · <button class="rname" data-name="${esc(b.rater)}">${esc(b.rater)}</button>${b.repeat ? " · repeat" : ""}
           <span class="label">· ${new Date(b.created_at.replace(" ", "T") + "Z").toLocaleString()}</span></span></li>`).join("")}</ol>`
       : `<p class="label">No battles yet.</p>`);
+    $("lbHist").querySelectorAll("button[data-h]").forEach((b) => (b.onclick = () => { lb.histAll = b.dataset.h === "all"; drawHistory(); }));
     $("lbHist").querySelectorAll("img").forEach((im) => (im.onclick = () => {
       const other = Number(im.dataset.id);
       if (state.d.faces.some((f) => f.id === other)) openBox(other);
