@@ -62,13 +62,13 @@ export async function loadData(env: Env, rater: string | null = null) {
   const groupNo = [...new Set(G)];
   const neither = (
     await env.DB.prepare(
-      `SELECT left_id, right_id FROM picks WHERE neither = 1 AND kind != 'repeat' AND (?1 IS NULL OR rater = ?1) ORDER BY id`,
-    ).bind(rater).all<{ left_id: number; right_id: number }>()
+      `SELECT left_id, right_id, rater FROM picks WHERE neither = 1 AND kind != 'repeat' AND (?1 IS NULL OR rater = ?1) ORDER BY id`,
+    ).bind(rater).all<{ left_id: number; right_id: number; rater: string }>()
   ).results.filter((r) => index.has(r.left_id) && index.has(r.right_id))
     .filter((r) => G[index.get(r.left_id)!] === G[index.get(r.right_id)!]);
-  const below: Below[] = neither.flatMap((r) => [r.left_id, r.right_id].map((id) => {
+  const below: (Below & { rater: string })[] = neither.flatMap((r) => [r.left_id, r.right_id].map((id) => {
     const i = index.get(id)!;
-    return { i, g: groupNo.indexOf(G[i]) };
+    return { i, g: groupNo.indexOf(G[i]), rater: r.rater };
   }));
   // Answers the scores learned from, counted the way maybeRetrain counts them.
   const used = picks.length + neither.length;
@@ -371,4 +371,50 @@ async function repeatAgreement(env: Env) {
   const names = [...new Set(results.map((r) => r.rater))].sort();
   const sum = (rows: { same: number }[]) => ({ n: rows.length, same: rows.length ? rows.filter((r) => r.same).length / rows.length : null });
   return { ...sum(results), raters: names.map((name) => ({ name, ...sum(results.filter((r) => r.rater === name)) })) };
+}
+
+// 2026-10-28 (Muajir: "option to exclude a rater, I wanna see if anyone
+// introduced lots of noise ... it should be like a checklist"). A preview
+// only: nothing is saved, the live ranking and battles are untouched. The
+// ranker's straight line is refitted without the unticked raters' answers
+// (picks and "neither"), and both lines, with everyone and without them, are
+// checked on the same held-out faces, on the remaining raters' picks only.
+export const PREVIEW_SPLITS = 3;
+export async function withoutRaters(env: Env, out: string[]) {
+  const data = await loadData(env);
+  if (!data) return null;
+  const { faces, Z: Z1, G, picks, below, groupNo } = data;
+  const alt = RANKER === "m1" ? null : await loadAlternate(env, RANKER);
+  const own = !!alt && faces.every((f) => alt.zs.has(f.id));
+  const Z = own ? faces.map((f) => alt!.zs.get(f.id)!) : Z1;
+  const drop = new Set(out);
+  const keep = picks.filter((p) => !drop.has(p.rater)), keepBelow = below.filter((b) => !drop.has(b.rater));
+  const nG = groupNo.length;
+  const fit = (tr: Pick[], bl: Below[], steps = 300) => new Arrow(Z[0].length, nG).fit(Z, tr, steps, 0.05, 1e-2, bl);
+  let withAll = 0, without = 0, n = 0, nTest = 0;
+  for (let k = 0; k < PREVIEW_SPLITS; k++) {
+    const { held, train, test } = split(picks, faces.length, rng(1000 + k));
+    const bl = held ? below.filter((b) => !held[b.i]) : below;
+    const tr = train as typeof picks;
+    const te = (test as typeof picks).filter((p) => !drop.has(p.rater));
+    const s1 = fit(tr, bl), s2 = fit(tr.filter((p) => !drop.has(p.rater)), bl.filter((b) => !drop.has(b.rater)));
+    const a = agreement(Z.map((z) => s1.score(z)), te), b = agreement(Z.map((z) => s2.score(z)), te);
+    if (a == null || b == null) continue;
+    withAll += a; without += b; n++; nTest += te.length;
+  }
+  const line = keep.length >= MIN_PICKS ? fit(keep, keepBelow) : null;
+  // Score test faces too, like the live page does.
+  const zs = own ? alt!.zs : new Map(
+    (await env.DB.prepare("SELECT id, z FROM applicants WHERE z IS NOT NULL").all<{ id: number; z: string }>())
+      .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
+  );
+  return {
+    line, zs,
+    summary: {
+      raters: out, picks_left: keep.length, picks_out: picks.length - keep.length,
+      neither_out: (below.length - keepBelow.length) / 2,
+      heldout_with: n ? withAll / n : null, heldout_without: n ? without / n : null,
+      n_test: n ? Math.round(nTest / n) : 0, splits: n,
+    },
+  };
 }
