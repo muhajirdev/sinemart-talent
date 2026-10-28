@@ -7,6 +7,7 @@
 // those models are cached in rater_models and never touch the shared scores.
 
 import { Arrow, Below, Hills, Pick, agreement, groupedPairs, rng, split } from "./hills";
+import { FullLine, fullFrom, fullJson } from "./full";
 
 export const RETRAIN_EVERY = 10;
 export const MIN_PICKS = 5;
@@ -20,6 +21,9 @@ export const REPEAT_EVERY = 20;
 // Model 1 (the main taste space), anything else an alt_models key.
 // 2026-10-27: Model 6 (Muajir: "can we try model 6"). Offline, 30 held-out
 // splits at 552 picks: 74.8% vs Model 1's 64.0%, ahead in all 30.
+// 2026-10-28: when the ranker's full-size vectors are loaded (full_z), it is
+// the line on those plus a per-face correction (src/full.ts; Muajir: "deploy
+// it live"), else its 16-number line as before.
 export const RANKER: string = "m6";
 
 type Env = { DB: D1Database };
@@ -247,6 +251,34 @@ async function rankerZ(env: Env, faces: { id: number }[]) {
   return faces.map((f) => alt.zs.get(f.id)!);
 }
 
+// The ranker's full-size vectors (full_z), by applicant id.
+async function loadFull(env: Env) {
+  return new Map(
+    (await env.DB.prepare("SELECT applicant_id AS id, z FROM full_z WHERE key = ?1").bind(RANKER).all<{ id: number; z: string }>())
+      .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
+  );
+}
+
+// Full-size vectors for these faces, or null when they don't cover everyone.
+async function rankerFull(env: Env, faces: { id: number }[]) {
+  const full = await loadFull(env);
+  if (!full.size || faces.some((f) => !full.has(f.id))) return null;
+  return faces.map((f) => full.get(f.id)!);
+}
+
+// How the live ranker scores anyone by applicant id, as last trained: the
+// full-size line plus corrections when that's what ranks (people with no
+// battles, like test faces, get no correction), else the 16-number line.
+export async function rankerScorer(env: Env): Promise<((id: number) => number | null) | null> {
+  const p = (await env.DB.prepare("SELECT params_ranker FROM model WHERE id = 1").first<{ params_ranker: string | null }>())?.params_ranker;
+  if (p) {
+    const full = await loadFull(env), f = fullFrom(JSON.parse(p));
+    if (full.size) return (id) => { const x = full.get(id); return x ? f.score(id, x) : null; };
+  }
+  const rl = await rankerLine(env);
+  return rl ? (id) => { const z = rl.zs.get(id); return z ? rl.line.score(z) : null; } : null;
+}
+
 // The ranker's straight line and taste space, as last trained (for scoring
 // test faces and the rater table).
 export async function rankerLine(env: Env) {
@@ -276,7 +308,14 @@ export async function retrain(env: Env) {
   const { by, held, train, test } = split(picks, faces.length, rand);
   const belowTrain = held ? below.filter((b) => !held[b.i]) : below;
   let heldoutHills: number | null = null, heldoutLine: number | null = null, heldoutOne: number | null = null;
+  let heldoutRanker: number | null = null;
+  const X = await rankerFull(env, faces);
+  const gi = G.map((g) => groupNo.indexOf(g));
   if (train.length >= MIN_PICKS && test.length >= 3) {
+    if (X) {
+      const f = new FullLine(X[0].length, faces.length).fit(X, train);
+      heldoutRanker = agreement(X.map((_, i) => f.score(X, i)), test);
+    }
     const h = fresh().fit(Z, train, G);
     const a = new Arrow(Z[0].length, nG).fit(Z, train, 300, 0.05, 1e-2, belowTrain);
     heldoutHills = agreement(Z.map((z, i) => h.score(z, G[i])), test);
@@ -292,14 +331,22 @@ export async function retrain(env: Env) {
   // The ranker: the straight arrow on every pick from every rater, in the
   // ranker's taste space (Model 1's if that model doesn't cover everyone).
   // Std = spread of 3 bootstrap fits. Model 1's hills still name each cluster.
+  // With full-size vectors, the full line + per-face corrections ranks instead.
   const Zr = await rankerZ(env, faces) ?? Z;
+  const full = X ? new FullLine(X[0].length, faces.length, nG).fit(X, picks).fitTau(X, gi, below, picks.length) : null;
   const ranker = Zr === Z ? line : new Arrow(Zr[0].length, nG).fit(Zr, picks, 300, 0.05, 1e-2, below);
-  const scores = Zr.map((z) => ranker.score(z));
+  const scores = X && full ? X.map((_, i) => full.score(X, i)) : Zr.map((z) => ranker.score(z));
   const hill = Z.map((z, i) => main.hill(z, G[i]));
   const runs = [0, 1, 2].map(() => {
     const boot = picks.map(() => picks[Math.floor(rand() * picks.length)]);
-    const b = new Arrow(Zr[0].length, nG).fit(Zr, boot, 150, 0.05, 1e-2, below);
-    const s = Zr.map((z) => b.score(z));
+    let s: number[];
+    if (X) {
+      const b = new FullLine(X[0].length, faces.length).fit(X, boot, 3e-3, 0.3, 100);
+      s = X.map((_, i) => b.score(X, i));
+    } else {
+      const b = new Arrow(Zr[0].length, nG).fit(Zr, boot, 150, 0.05, 1e-2, below);
+      s = Zr.map((z) => b.score(z));
+    }
     // Centre within each group: scores only compare inside a group.
     const mean = new Map<string | null, number>();
     for (const g of new Set(G)) {
@@ -320,7 +367,7 @@ export async function retrain(env: Env) {
   const stmts: D1PreparedStatement[] = faces.map((f, i) =>
     env.DB.prepare(
       "UPDATE applicants SET score = ?1, score_std = ?2, look = ?3, model = ?4, updated_at = ?5 WHERE id = ?6",
-    ).bind(scores[i], std[i], hill[i], Zr === Z ? "line" : `${RANKER}:line`, now, f.id),
+    ).bind(scores[i], std[i], hill[i], X ? `${RANKER}:full` : Zr === Z ? "line" : `${RANKER}:line`, now, f.id),
   );
   // Every unanswered pair goes (repeats too: the next one is drawn when served), including ones on screen now: they were chosen
   // by the old model (and may predate a gender fix). Their picks still count.
@@ -335,15 +382,16 @@ export async function retrain(env: Env) {
   stmts.push(
     env.DB.prepare(
       `UPDATE model SET params = ?1, active = 'line', heldout_hills = ?2, heldout_line = ?3, n_test = ?4,
-       split_by = ?5, n_picks = ?6, trained_at = ?7, params_one = ?8, heldout_one = ?9, params_line = ?10 WHERE id = 1`,
+       split_by = ?5, n_picks = ?6, trained_at = ?7, params_one = ?8, heldout_one = ?9, params_line = ?10,
+       params_ranker = ?11, heldout_ranker = ?12 WHERE id = 1`,
     ).bind(JSON.stringify(main), heldoutHills, heldoutLine, test.length, by, used, now, JSON.stringify(one), heldoutOne,
-      arrowJson(line, groupNo)),
+      arrowJson(line, groupNo), full ? fullJson(full, faces.map((f) => f.id), groupNo) : null, heldoutRanker),
   );
   stmts.push(...(await fitAlternates(env, faces, G, picks, train, test, below, belowTrain, nG, used)));
   await runBatches(env.DB, stmts);
   return {
     status: "trained", picks: picks.length, heldout_hills: heldoutHills, heldout_one: heldoutOne,
-    heldout_line: heldoutLine, n_test: test.length,
+    heldout_line: heldoutLine, heldout_ranker: heldoutRanker, n_test: test.length,
   };
 }
 
@@ -354,8 +402,8 @@ export async function retrain(env: Env) {
 export async function raterAgreement(env: Env) {
   const all = await loadData(env);
   if (!all) return { raters: [], cross: [], same_pair: [] };
-  const team = await rankerLine(env);
-  const teamScores = team ? all.faces.map((f) => { const z = team.zs.get(f.id); return z ? team.line.score(z) : 0; }) : null;
+  const team = await rankerScorer(env);
+  const teamScores = team ? all.faces.map((f) => team(f.id) ?? 0) : null;
   // What each rater answered, skips and "neither" included, and how fast
   // (2026-10-27: one rater answered "neither" 1,363 times in 34 minutes,
   // ~1 s each, invisible in a table that only counted winners).
@@ -445,7 +493,28 @@ export async function withoutRaters(env: Env, out: string[]) {
   const drop = new Set(out);
   const keep = picks.filter((p) => !drop.has(p.rater)), keepBelow = below.filter((b) => !drop.has(b.rater));
   const nG = groupNo.length;
-  const fit = (tr: Pick[], bl: Below[], steps = 300) => new Arrow(Z[0].length, nG).fit(Z, tr, steps, 0.05, 1e-2, bl);
+  // Same ranker as live: the full-size line when its vectors cover everyone.
+  const full = await loadFull(env);
+  const X = full.size && faces.every((f) => full.has(f.id)) ? faces.map((f) => full.get(f.id)!) : null;
+  // Scores the faces being trained (by index) and anyone else by id (test
+  // faces: full-size line without a correction, or the 16-number line).
+  type Scorer = { score: (z: number[], i: number) => number; byId: (id: number) => number | null };
+  const zs = own ? alt!.zs : new Map(
+    (await env.DB.prepare("SELECT id, z FROM applicants WHERE z IS NOT NULL").all<{ id: number; z: string }>())
+      .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
+  );
+  const index = new Map(faces.map((f, i) => [f.id, i]));
+  const fit = (tr: Pick[], bl: Below[]): Scorer => {
+    if (X) {
+      const m = new FullLine(X[0].length, faces.length).fit(X, tr);
+      return {
+        score: (_z, i) => m.score(X, i),
+        byId: (id) => { const i = index.get(id); if (i !== undefined) return m.score(X, i); const x = full.get(id); return x ? m.image(x) : null; },
+      };
+    }
+    const a = new Arrow(Z[0].length, nG).fit(Z, tr, 300, 0.05, 1e-2, bl);
+    return { score: (z) => a.score(z), byId: (id) => { const z = zs.get(id); return z ? a.score(z) : null; } };
+  };
   let withAll = 0, without = 0, n = 0, nTest = 0;
   for (let k = 0; k < PREVIEW_SPLITS; k++) {
     const { held, train, test } = split(picks, faces.length, rng(1000 + k));
@@ -453,18 +522,14 @@ export async function withoutRaters(env: Env, out: string[]) {
     const tr = train as typeof picks;
     const te = (test as typeof picks).filter((p) => !drop.has(p.rater));
     const s1 = fit(tr, bl), s2 = fit(tr.filter((p) => !drop.has(p.rater)), bl.filter((b) => !drop.has(b.rater)));
-    const a = agreement(Z.map((z) => s1.score(z)), te), b = agreement(Z.map((z) => s2.score(z)), te);
+    const a = agreement(Z.map((z, i) => s1.score(z, i)), te), b = agreement(Z.map((z, i) => s2.score(z, i)), te);
     if (a == null || b == null) continue;
     withAll += a; without += b; n++; nTest += te.length;
   }
+  // Scores test faces too, like the live page does.
   const line = keep.length >= MIN_PICKS ? fit(keep, keepBelow) : null;
-  // Score test faces too, like the live page does.
-  const zs = own ? alt!.zs : new Map(
-    (await env.DB.prepare("SELECT id, z FROM applicants WHERE z IS NOT NULL").all<{ id: number; z: string }>())
-      .results.map((r) => [r.id, JSON.parse(r.z) as number[]]),
-  );
   return {
-    line, zs,
+    score: line ? line.byId : null,
     summary: {
       raters: out, picks_left: keep.length, picks_out: picks.length - keep.length,
       neither_out: (below.length - keepBelow.length) / 2,
