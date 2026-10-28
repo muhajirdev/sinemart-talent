@@ -176,12 +176,14 @@
     if (d.rater) {
       $("model").innerHTML = `
         <div class="stats">
-          <div class="stat"><b>${trained ? "Clusters" : "Not trained"}</b><span>${esc(d.rater)}'s own model · ${gname[state.gender] || ""}</span></div>
+          <div class="stat"><b>${trained ? modeName(m.mode, m.alternates) : "Not trained"}</b><span>${esc(d.rater)}'s own model · ${gname[state.gender] || ""}</span></div>
           <div class="stat"><b>${p.decided}</b><span>picks by ${esc(d.rater)} (${p.total - p.decided} skipped)</span></div>
         </div>
-        <p class="note">${trained
-          ? `Scores below come only from ${esc(d.rater)}'s picks: this is one person's taste. The team model (all raters) is what drives the pairs.`
-          : `${esc(d.rater)} needs ${m.min_picks} picks before a personal model can be trained.`}</p>`;
+        <p class="note">${!trained
+          ? `${esc(d.rater)} needs ${m.min_picks} picks before a personal model can be trained.`
+          : isRule(m.mode, m.alternates)
+          ? `A fixed rule learns nothing from picks, so ${esc(d.rater)}'s view is the same as everyone's.`
+          : `Scores below come only from ${esc(d.rater)}'s picks: this is one person's taste. The team model (all raters) is what drives the pairs.`}</p>`;
       state.d = d; state.mean = mean;
       renderBoard();
       $("msg").hidden = true;
@@ -647,9 +649,10 @@
   async function load() {
     saveUrl();
     const q = state.rater ? `?rater=${encodeURIComponent(state.rater)}` : "";
-    const mq = !state.rater && state.mode !== "line" ? `${q ? "&" : "?"}mode=${encodeURIComponent(state.mode)}` : "";
+    const mq = state.mode !== "line" ? `${q ? "&" : "?"}mode=${encodeURIComponent(state.mode)}` : "";
     const g = `${q || mq ? "&" : "?"}gender=${state.gender}`;
-    $("msw").hidden = $("csw").hidden = !!state.rater;
+    // 2026-10-28: the model and shape switches work for one rater's taste too.
+    $("msw").hidden = $("csw").hidden = false;
     // The scores come first; the agreement table and the map (hundreds of face
     // images, inside a closed section) must not hold them up.
     const ar = api("/api/raters");
@@ -658,7 +661,7 @@
     const data = await r.json();
     state.pg = data.model?.peak_gender || [];
     state.ranker = data.model?.ranker || "m1";
-    if (!state.rater) renderModes(data.model?.alternates);
+    renderModes(data.model?.alternates);
     // One group at a time: scores only compare within cewek or within cowok.
     const grouped = data.faces.some((f) => f.gender);
     $("gsw").hidden = !grouped;

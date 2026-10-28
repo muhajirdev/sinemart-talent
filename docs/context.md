@@ -68,7 +68,8 @@ team A/B picks (picking page ► Worker ► D1 picks)
   - FaRL and ArcFace weights are research / non-commercial only. Check
     licences before anything beyond the prototype.
 - **Per-rater taste.** The Lab "Taste of" switch fits one rater's own model
-  (cached in `rater_models`, min 5 picks). The rater agreement table shows how
+  on whichever model and shape is selected (cached in `rater_models` under the
+  name for Model 1 many clusters, `name<TAB>mode` otherwise; min 5 picks). The rater agreement table shows how
   well the team model and each other rater predict that rater.
 
 ## Decisions (with dates) — don't undo these without asking Muajir
@@ -98,6 +99,7 @@ team A/B picks (picking page ► Worker ► D1 picks)
 | 2026-10-27 | **Scorer app** (`scorer/`, "Nilai Foto"): score photos of someone not in the app with Model 1 and Model 6, read-only, photos never stored. TanStack Start on Workers for the page and maths; a Cloudflare Container runs the Python face pipeline (pinned versions, so numbers match the pipeline). Taste spaces now saved in R2 `models/<key>/taste.json`. Live at <https://sinemart-scorer.qalam.workers.dev> (separate Worker `sinemart-scorer`; the picking app is untouched). | Muajir: "upload a new photo … pick model 6 with straight line … give score"; "run on tanstack server", Cloudflare Containers. |
 | 2026-10-27 | The Lab shows **comparisons** (winner or tie) as the headline count, with "neither" and skips beside it, and the rater table shows every rater's winners / ties / neither / skips and median seconds per answer (under 1.5 s highlighted). | "Decided" mixed in a 1,363-answer "neither" burst and read as 2,348 picks. |
 | 2026-10-27 | Lab leaderboard **Sources** checklist (2021, 2026, bc). From `applicants.source`; test batches (`applicants.test = 1`) are off by default; ticked, they rank among applicants, scored live by Model 1's line, and the 0–100 scale stays relative to applicants only. Test batches are a column of their own, not `noise` (first loaded as `noise = 'bc'`, which put all 201 under "Marked as bad photos"). | Muajir: "show applicant sources, like checklist"; "we can choose to include this bc sources". |
+| 2026-10-28 | "Taste of" works with every model and shape (default straight line on Model 1, like the team view). The agreement table still uses each rater's many-clusters model. | Muajir asked to compare raters on any model. |
 
 
 ## Data and personal data rules

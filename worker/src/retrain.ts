@@ -90,24 +90,79 @@ export function hillsFrom(p: Params) {
   return h;
 }
 
-// One rater's own model, refitted only when they've made new picks.
-export async function raterModel(env: Env, rater: string) {
-  const data = await loadData(env, rater);
-  if (!data) return null;
-  const n = data.picks.length;
-  if (n < MIN_PICKS) return { data, hills: null, n };
+// The same data cut down to the faces `keep` accepts, picks renumbered.
+function only(data: NonNullable<Awaited<ReturnType<typeof loadData>>>, keep: (f: { id: number }) => boolean) {
+  const old = data.faces.map((f, i) => i).filter((i) => keep(data.faces[i]));
+  const to = new Map(old.map((i, j) => [i, j]));
+  const picks = data.picks.filter((p) => to.has(p.w) && to.has(p.l)).map((p) => ({ ...p, w: to.get(p.w)!, l: to.get(p.l)! }));
+  const below = data.below.filter((b) => to.has(b.i)).map((b) => ({ ...b, i: to.get(b.i)! }));
+  const faces = old.map((i) => data.faces[i]);
+  return { ...data, faces, index: new Map(faces.map((f, j) => [f.id, j])), Z: old.map((i) => data.Z[i]), G: old.map((i) => data.G[i]),
+    picks, below, used: picks.length + below.length / 2 };
+}
+
+// One rater's own model, on any model and shape the scores page shows
+// (2026-10-28, Muajir: "Taste of" with Model 1..N and straight line / many /
+// one cluster). Cached per rater and mode, refitted only when they've made new
+// picks. "hills" keeps its old cache key, the plain name; login collapses
+// whitespace, so a name never holds a tab and `name<TAB>mode` can't clash.
+export async function raterModel(env: Env, rater: string, mode = "hills") {
+  const loaded = await loadData(env, rater);
+  if (!loaded) return null;
+  let data = loaded;
+  // Same modes as the team view: "line" = the ranker's straight line, "1:line" = Model 1's.
+  const [key, variant] = mode === "line" ? [RANKER === "m1" ? "1" : RANKER, "line"]
+    : ["hills", "one"].includes(mode) ? ["1", mode] : [mode.split(":")[0], mode.split(":")[1] ?? "hills"];
+  let Z = data.Z, peaks = data.peaks, pg = data.peakGroup;
+  let teamHills: string | null, zs: Map<number, number[]> | undefined, init: { peaks: number[][]; peak_gender?: string[] } | undefined;
+  if (key === "1") {
+    teamHills = (await env.DB.prepare("SELECT params FROM model WHERE id = 1").first<{ params: string | null }>())?.params ?? null;
+  } else {
+    const alt = await loadAlternate(env, key);
+    if (!alt) return null;
+    if (!alt.zs.size) {
+      // A fixed rule: nothing to learn, so everyone keeps the rule's own score.
+      const fixed = alt.fixed ?? {};
+      return { data, n: data.picks.length, pg: [], params: null, zs: undefined, init: undefined, fitted: true, rule: true,
+        score: (i: number): number | null => fixed[data.faces[i].id] ?? null, hill: (_i: number): number | null => null };
+    }
+    zs = alt.zs; init = alt.init;
+    // People added after this model was computed have no place in it: they sit
+    // out (no score), and so do their picks.
+    if (data.faces.some((f) => !alt.zs.has(f.id))) data = only(data, (f) => alt.zs.has(f.id));
+    Z = data.faces.map((f) => alt.zs.get(f.id)!);
+    peaks = alt.init.peaks; pg = alt.init.peak_gender ?? [];
+    teamHills = alt.params;
+  }
+  // The straight line also learns from "keduanya kurang menarik"; the hills don't.
+  const n = variant === "line" ? data.used : data.picks.length;
+  const team = teamHills ? hillsFrom(JSON.parse(teamHills)) : null;
+  const none = { data, n, pg: team?.pg ?? pg, params: teamHills, zs, init, fitted: false, rule: false,
+    score: (_i: number): number | null => null, hill: (_i: number): number | null => null };
+  if (data.picks.length < MIN_PICKS) return none;
+  const cacheKey = mode === "hills" ? rater : `${rater}\t${mode}`;
   const cached = await env.DB.prepare("SELECT n_picks, params FROM rater_models WHERE rater = ?1")
-    .bind(rater)
+    .bind(cacheKey)
     .first<{ n_picks: number; params: string }>();
-  if (cached && cached.n_picks === n) return { data, hills: hillsFrom(JSON.parse(cached.params)), n };
-  const hills = new Hills(data.peaks, data.peakGroup).fit(data.Z, data.picks, data.G);
-  await env.DB.prepare(
-    `INSERT INTO rater_models (rater, n_picks, params, trained_at) VALUES (?1, ?2, ?3, datetime('now'))
-     ON CONFLICT (rater) DO UPDATE SET n_picks = ?2, params = ?3, trained_at = datetime('now')`,
-  )
-    .bind(rater, n, JSON.stringify(hills))
-    .run();
-  return { data, hills, n };
+  let params = cached && cached.n_picks === n ? cached.params : null;
+  if (!params) {
+    params = variant === "line"
+      ? arrowJson(new Arrow(Z[0].length, data.groupNo.length).fit(Z, data.picks, 300, 0.05, 1e-2, data.below))
+      : JSON.stringify((variant === "one" ? oneHill(Z, data.G) : new Hills(peaks, pg)).fit(Z, data.picks, data.G));
+    await env.DB.prepare(
+      `INSERT INTO rater_models (rater, n_picks, params, trained_at) VALUES (?1, ?2, ?3, datetime('now'))
+       ON CONFLICT (rater) DO UPDATE SET n_picks = ?2, params = ?3, trained_at = datetime('now')`,
+    )
+      .bind(cacheKey, n, params)
+      .run();
+  }
+  if (variant === "line") {
+    // Clusters on a line come from the team's hills of the same model, as on the team view.
+    const a = arrowFrom(JSON.parse(params));
+    return { ...none, fitted: true, score: (i: number) => a.score(Z[i]), hill: (i: number) => team ? team.hill(Z[i], data.G[i]) : null };
+  }
+  const h = hillsFrom(JSON.parse(params));
+  return { ...none, pg: h.pg, params, fitted: true, score: (i: number) => h.score(Z[i], data.G[i]), hill: (i: number) => h.hill(Z[i], data.G[i]) };
 }
 
 // "One hill" comparison model: a single peak per group (cewek, cowok),
@@ -322,7 +377,7 @@ export async function raterAgreement(env: Env) {
   for (const n of names) {
     if (!byRater.get(n)!.length) { models.set(n, null); continue; } // only skips or "neither"
     const m = await raterModel(env, n);
-    models.set(n, m?.hills ? all.Z.map((z, i) => m.hills!.score(z, all.G[i])) : null);
+    models.set(n, m?.fitted ? all.Z.map((_, i) => m.score(i)!) : null);
   }
   const raters = names.map((n) => ({
     name: n,
