@@ -383,6 +383,24 @@ async function raterResults(env: Env, who: string, mode: string | null = null) {
       ...geo.get(f.id),
     }))
     .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity) || a.id - b.id);
+  // 2026-10-28 (Muajir: "why the #1 score becomes 100 with siska's taste").
+  // One person's picks are few and easy to fit perfectly, so their own line
+  // grows steep and the top lands at 100. Shrink their scores to the team
+  // ranking's spread within each group: same order, the 0-100 scale reads
+  // like the team view's.
+  const team = new Map(
+    (await env.DB.prepare("SELECT id, score FROM applicants WHERE score IS NOT NULL AND noise IS NULL AND test = 0").all<{ id: number; score: number }>())
+      .results.map((r) => [r.id, r.score]),
+  );
+  const sd = (v: number[]) => { const m = v.reduce((a, b) => a + b, 0) / v.length; return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length); };
+  const rule = !m.params && !m.zs; // a fixed rule keeps its own scale, as on the team view
+  if (!rule) for (const g of new Set(faces.map((f) => f.gender))) {
+    const mine = faces.filter((f) => f.gender === g && f.score != null);
+    const theirs = mine.map((f) => team.get(f.id)).filter((x): x is number => x != null);
+    if (mine.length < 2 || theirs.length < 2) continue;
+    const s1 = sd(mine.map((f) => f.score!)), s2 = sd(theirs);
+    if (s1 > 0 && s2 > 0) for (const f of mine) f.score = (f.score! * s2) / s1;
+  }
   // The model switch needs the list of models, same as the team view.
   const alternates = (await env.DB.prepare(`SELECT key, fixed IS NOT NULL AS has_fixed,
        EXISTS (SELECT 1 FROM alt_z z WHERE z.key = m.key) AS has_z FROM alt_models m ORDER BY key`).all()).results;
