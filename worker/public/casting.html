@@ -44,7 +44,7 @@
   .strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
   .strip .face .m { padding: 2px 5px; font-size: 11px; }
   .strip .face .m span { display: none; }
-  @media (max-width: 560px) { .vs { grid-template-columns: 1fr; } }
+  @media (max-width: 560px) { .panel { position: static; } .strip { grid-template-columns: repeat(3, 1fr); } }
   #msg { color: var(--muted); padding: 30px 0; text-align: center; }
   .box { position: fixed; inset: 0; background: #000d; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
   .box[hidden] { display: none; }
@@ -108,6 +108,7 @@
     if (token) localStorage.setItem("rater", token); } catch (_) {}
   const $ = (id) => document.getElementById(id);
   if (!token) { $("msg").innerHTML = '<a href="/">Masuk dulu di halaman memilih</a>, lalu buka halaman ini lagi.'; return; }
+  const tk = encodeURIComponent(token);
   const api = (path) => fetch(path, { headers: { "x-rater-token": token } });
 
   const SRC_NAME = { "sctv-mencari-bintang-2026": "Form Mencari Bintang 2026", "2026": "Pelamar 2026", "2021": "Pelamar 2021", bc: "Showcase" };
@@ -125,8 +126,8 @@
     const r = await api("/api/casting" + (st.source ? "?source=" + encodeURIComponent(st.source) : ""));
     if (r.status === 401) { $("msg").innerHTML = '<a href="/">Masuk dulu di halaman memilih</a>.'; return; }
     const d = await r.json();
-    if (first) {
-      if (st.source == null && d.sources.length) { st.source = d.sources[0].source; return load(false); }
+    if (first && st.source == null && d.sources.length) { st.source = d.sources[0].source; save(); return load(false); }
+    if (!$("src").options.length) {
       const sel = $("src");
       const total = d.sources.reduce((a, s) => a + s.n, 0);
       sel.innerHTML = d.sources.map((s) => `<option value="${s.source}">${srcName(s.source)} (${s.n})</option>`).join("")
@@ -158,13 +159,13 @@
     for (const f of list) {
       const out = f.skor == null || f.skor < c;
       if (out && !divided && c > 0) { html += `<div class="divider">Di bawah batas ${c} (tersaring)</div>`; divided = true; }
-      html += `<div class="face${out ? " out" : ""}" data-id="${f.id}"><img loading="lazy" src="/img/${f.id}" alt="">`
+      html += `<div class="face${out ? " out" : ""}" data-id="${f.id}"><img loading="lazy" src="/img/${f.id}?t=${tk}" alt="">`
         + `<div class="m"><b>${f.skor == null ? "–" : Math.round(f.skor)}</b><span>#${f.id}</span></div></div>`;
     }
     $("grid").innerHTML = html || '<p class="note">Tidak ada pelamar di sini.</p>';
     // Contrast at a glance: the best and the worst of this view side by side.
     const scored = list.filter((f) => f.skor != null), n = Math.min(12, Math.floor(scored.length / 2));
-    const tile = (f) => `<div class="face" data-id="${f.id}"><img loading="lazy" src="/img/${f.id}" alt=""><div class="m"><b>${Math.round(f.skor)}</b><span></span></div></div>`;
+    const tile = (f) => `<div class="face" data-id="${f.id}"><img loading="lazy" src="/img/${f.id}?t=${tk}" alt=""><div class="m"><b>${Math.round(f.skor)}</b><span></span></div></div>`;
     $("vs").hidden = n < 1;
     $("topS").innerHTML = scored.slice(0, n).map(tile).join("");
     $("botS").innerHTML = scored.slice(-n).reverse().map(tile).join("");
@@ -195,7 +196,7 @@
   const bx = { f: null, n: -1 };
   function showBox() {
     const f = bx.f;
-    $("bimg").src = bx.n < 0 ? `/img/${f.id}` : `/img/${f.id}/${bx.n}`;
+    $("bimg").src = bx.n < 0 ? `/img/${f.id}?t=${tk}` : `/img/${f.id}/${bx.n}?t=${tk}`;
     const row = formRow(f);
     $("binfo").textContent = `#${f.id}${row ? " · baris " + row : ""} · skor ${f.skor == null ? "–" : Math.round(f.skor)} · foto ${bx.n + 2}/${f.n_photos + 1}`;
     $("box").hidden = false;
