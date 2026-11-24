@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow, noimageindex">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#202020">
+<title>Sinemart Casting</title>
+<style>
+  :root { --bg: #202020; --card: #2b2b2b; --fg: #f2f2f2; --muted: #9a9a9a; --accent: #f5c242; --good: #7bd88f; --bad: #ff8a80; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom)); max-width: 1100px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 0; gap: 12px; }
+  h1 { font-size: 17px; margin: 0; }
+  a { color: var(--accent); text-decoration: none; }
+  .card { background: var(--card); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .panel { position: sticky; top: 0; z-index: 5; box-shadow: 0 6px 16px #0008; }
+  label.t { display: block; color: var(--muted); font-size: 13px; margin: 0 0 4px; }
+  select { background: #1a1a1a; color: var(--fg); border: 1px solid #444; border-radius: 8px; padding: 7px 10px; font-size: 14px; max-width: 100%; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px 20px; align-items: end; }
+  .chips { display: flex; gap: 6px; }
+  .chips button, .btn { background: var(--card); color: var(--fg); border: 1px solid #444; border-radius: 999px; padding: 6px 14px; font-size: 14px; cursor: pointer; }
+  .chips button[aria-pressed="true"] { background: var(--fg); color: #111; border-color: var(--fg); }
+  .btn.main { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .cut { margin-top: 12px; }
+  .cut .lab { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
+  .cut b { font-variant-numeric: tabular-nums; }
+  .counts { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 8px; font-size: 14px; }
+  .counts .k b { color: var(--good); } .counts .d b { color: var(--bad); }
+  .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+  .face { background: var(--card); border-radius: 10px; overflow: hidden; cursor: pointer; position: relative; }
+  .face img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: #555; }
+  .face .m { display: flex; justify-content: space-between; padding: 4px 7px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .face .m b { font-size: 13px; }
+  .face.out { opacity: .38; }
+  .face.out:hover { opacity: .8; }
+  .divider { grid-column: 1 / -1; border-top: 2px dashed var(--bad); color: var(--bad); font-size: 13px; padding-top: 6px; margin: 6px 0; }
+  .vs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .vs h2 { font-size: 14px; margin: 0 0 8px; } .vs h2.top { color: var(--good); } .vs h2.bot { color: var(--bad); }
+  .strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
+  .strip .face .m { padding: 2px 5px; font-size: 11px; }
+  .strip .face .m span { display: none; }
+  @media (max-width: 560px) { .panel { position: static; } .strip { grid-template-columns: repeat(3, 1fr); } }
+  #msg { color: var(--muted); padding: 30px 0; text-align: center; }
+  .box { position: fixed; inset: 0; background: #000d; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+  .box[hidden] { display: none; }
+  .box img { max-width: 100%; max-height: 74vh; border-radius: 10px; }
+  .box .bar { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; justify-content: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Saring pelamar</h1>
+  <a href="/">Kembali memilih</a>
+</header>
+
+<div class="card panel" id="panel" hidden>
+  <div class="row">
+    <div><label class="t" for="src">Sumber</label><select id="src"></select></div>
+    <div><label class="t">Gender</label>
+      <div class="chips" id="gen">
+        <button data-g="" aria-pressed="true">Semua</button>
+        <button data-g="f" aria-pressed="false">Cewek</button>
+        <button data-g="m" aria-pressed="false">Cowok</button>
+      </div></div>
+    <div style="margin-left:auto"><button class="btn main" id="dl">Unduh yang lolos</button></div>
+  </div>
+  <div class="cut">
+    <div class="lab"><span>Batas skor: <b id="cutv">0</b></span><span id="pctv"></span></div>
+    <input type="range" id="cut" min="0" max="100" step="1" value="0">
+  </div>
+  <div class="counts">
+    <span class="k">Lolos <b id="nk">0</b></span>
+    <span class="d">Tersaring <b id="nd">0</b></span>
+    <span id="nn" class="note" style="margin:0"></span>
+  </div>
+  <p class="note">Skor 0–100 = peluang orang ini dipilih tim dibanding pelamar rata-rata. Geser batas untuk menyaring yang jelas kurang cocok. Ketuk foto untuk lihat semua fotonya.</p>
+</div>
+
+<div class="card" id="vs" hidden>
+  <div class="vs">
+    <div><h2 class="top">Teratas</h2><div class="strip" id="topS"></div></div>
+    <div><h2 class="bot">Terbawah</h2><div class="strip" id="botS"></div></div>
+  </div>
+</div>
+
+<div id="msg">Memuat…</div>
+<div class="grid" id="grid"></div>
+
+<div class="box" id="box" hidden>
+  <img id="bimg" alt="">
+  <div class="bar">
+    <button class="btn" id="bprev">‹</button>
+    <span id="binfo"></span>
+    <button class="btn" id="bnext">›</button>
+    <button class="btn" id="bclose">Tutup</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  let token = null;
+  try { token = new URLSearchParams(location.search).get("t") || localStorage.getItem("rater");
+    if (token) localStorage.setItem("rater", token); } catch (_) {}
+  const $ = (id) => document.getElementById(id);
+  if (!token) { $("msg").innerHTML = '<a href="/">Masuk dulu di halaman memilih</a>, lalu buka halaman ini lagi.'; return; }
+  const tk = encodeURIComponent(token);
+  const api = (path) => fetch(path, { headers: { "x-rater-token": token } });
+
+  const SRC_NAME = { "sctv-mencari-bintang-2026": "Form Mencari Bintang 2026", "2026": "Pelamar 2026", "2021": "Pelamar 2021", bc: "Showcase" };
+  const srcName = (s) => SRC_NAME[s] || s;
+  // SCTV form: id = 910000 + response index, so the form sheet row is id − 910000 + 2.
+  const formRow = (f) => (f.source === "sctv-mencari-bintang-2026" ? f.id - 910000 + 2 : "");
+
+  const saved = (() => { try { return JSON.parse(localStorage.getItem("casting") || "{}"); } catch (_) { return {}; } })();
+  const st = { source: saved.source ?? null, gender: saved.gender ?? "", cut: saved.cut || {}, faces: [] };
+  const save = () => { try { localStorage.setItem("casting", JSON.stringify({ source: st.source, gender: st.gender, cut: st.cut })); } catch (_) {} };
+  const key = () => (st.source || "*") + "|" + st.gender;
+
+  async function load(first) {
+    $("msg").hidden = false; $("msg").textContent = "Memuat…"; $("grid").innerHTML = "";
+    const r = await api("/api/casting" + (st.source ? "?source=" + encodeURIComponent(st.source) : ""));
+    if (r.status === 401) { $("msg").innerHTML = '<a href="/">Masuk dulu di halaman memilih</a>.'; return; }
+    const d = await r.json();
+    if (first && st.source == null && d.sources.length) { st.source = d.sources[0].source; save(); return load(false); }
+    if (!$("src").options.length) {
+      const sel = $("src");
+      const total = d.sources.reduce((a, s) => a + s.n, 0);
+      sel.innerHTML = d.sources.map((s) => `<option value="${s.source}">${srcName(s.source)} (${s.n})</option>`).join("")
+        + `<option value="">Semua sumber (${total})</option>`;
+    }
+    $("src").value = st.source || "";
+    st.faces = d.faces;
+    $("panel").hidden = false; $("msg").hidden = true;
+    for (const b of $("gen").children) b.setAttribute("aria-pressed", String(b.dataset.g === st.gender));
+    $("cut").value = st.cut[key()] ?? 0;
+    draw();
+  }
+
+  const shown = () => st.faces.filter((f) => !st.gender || f.gender === st.gender);
+
+  function counts() {
+    const c = Number($("cut").value), list = shown();
+    const kept = list.filter((f) => f.skor != null && f.skor >= c).length, none = list.filter((f) => f.skor == null).length;
+    $("cutv").textContent = c;
+    $("nk").textContent = kept; $("nd").textContent = list.length - kept - none;
+    $("pctv").textContent = list.length ? `${Math.round(100 * (list.length - kept - none) / Math.max(1, list.length - none))}% tersaring` : "";
+    $("nn").textContent = none ? `${none} belum ada skor` : "";
+    return c;
+  }
+
+  function draw() {
+    const c = counts(), list = shown();
+    let html = "", divided = false;
+    for (const f of list) {
+      const out = f.skor == null || f.skor < c;
+      if (out && !divided && c > 0) { html += `<div class="divider">Di bawah batas ${c} (tersaring)</div>`; divided = true; }
+      html += `<div class="face${out ? " out" : ""}" data-id="${f.id}"><img loading="lazy" src="/img/${f.id}?t=${tk}" alt="">`
+        + `<div class="m"><b>${f.skor == null ? "–" : Math.round(f.skor)}</b><span>#${f.id}</span></div></div>`;
+    }
+    $("grid").innerHTML = html || '<p class="note">Tidak ada pelamar di sini.</p>';
+    // Contrast at a glance: the best and the worst of this view side by side.
+    const scored = list.filter((f) => f.skor != null), n = Math.min(12, Math.floor(scored.length / 2));
+    const tile = (f) => `<div class="face" data-id="${f.id}"><img loading="lazy" src="/img/${f.id}?t=${tk}" alt=""><div class="m"><b>${Math.round(f.skor)}</b><span></span></div></div>`;
+    $("vs").hidden = n < 1;
+    $("topS").innerHTML = scored.slice(0, n).map(tile).join("");
+    $("botS").innerHTML = scored.slice(-n).reverse().map(tile).join("");
+  }
+
+  $("src").onchange = () => { st.source = $("src").value || ""; save(); load(false); };
+  $("gen").onclick = (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    st.gender = b.dataset.g; save();
+    for (const x of $("gen").children) x.setAttribute("aria-pressed", String(x === b));
+    $("cut").value = st.cut[key()] ?? 0; draw();
+  };
+  let t = null;
+  $("cut").oninput = () => { counts(); st.cut[key()] = Number($("cut").value); save(); clearTimeout(t); t = setTimeout(draw, 120); };
+
+  $("dl").onclick = () => {
+    const c = Number($("cut").value);
+    const kept = shown().filter((f) => f.skor != null && f.skor >= c);
+    const lines = [["no_pelamar", "baris_form", "gender", "sumber", "skor"].join(",")]
+      .concat(kept.map((f) => [f.id, formRow(f), f.gender === "f" ? "cewek" : f.gender === "m" ? "cowok" : "", srcName(f.source), f.skor].join(",")));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }));
+    a.download = `lolos-${(st.source || "semua")}${st.gender ? "-" + (st.gender === "f" ? "cewek" : "cowok") : ""}-batas${c}.csv`;
+    a.click();
+  };
+
+  // Photo viewer: the face crop first, then every whole photo.
+  const bx = { f: null, n: -1 };
+  function showBox() {
+    const f = bx.f;
+    $("bimg").src = bx.n < 0 ? `/img/${f.id}?t=${tk}` : `/img/${f.id}/${bx.n}?t=${tk}`;
+    const row = formRow(f);
+    $("binfo").textContent = `#${f.id}${row ? " · baris " + row : ""} · skor ${f.skor == null ? "–" : Math.round(f.skor)} · foto ${bx.n + 2}/${f.n_photos + 1}`;
+    $("box").hidden = false;
+  }
+  $("vs").onclick = (e) => $("grid").onclick(e);
+  $("grid").onclick = (e) => {
+    const el = e.target.closest(".face"); if (!el) return;
+    bx.f = st.faces.find((f) => f.id === Number(el.dataset.id)); bx.n = -1; showBox();
+  };
+  const step = (d) => { const tot = bx.f.n_photos + 1; bx.n = ((bx.n + 1 + d + tot) % tot) - 1; showBox(); };
+  $("bprev").onclick = () => step(-1); $("bnext").onclick = () => step(1);
+  $("bclose").onclick = () => { $("box").hidden = true; };
+  $("box").onclick = (e) => { if (e.target === $("box")) $("box").hidden = true; };
+  document.onkeydown = (e) => {
+    if ($("box").hidden) return;
+    if (e.key === "Escape") $("box").hidden = true; else if (e.key === "ArrowLeft") step(-1); else if (e.key === "ArrowRight") step(1);
+  };
+
+  load(true);
+})();
+</script>
+</body>
+</html>
