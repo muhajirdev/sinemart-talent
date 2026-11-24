@@ -511,6 +511,32 @@ async function exportPicks(env: Env) {
   return new Response(lines.join("\n") + "\n", { headers: { "content-type": "text/csv" } });
 }
 
+// 2026-11-24 (Muajir: "allow the filtering or threshold ... so the admin can
+// choose to filter out at what threshold", "build some kind of interface for
+// casting admin"). Everyone in one source (or all), with the team's score on
+// the same 0-100 scale as the Lab: the chance to beat an average applicant.
+// The casting page (/casting.html) picks the cutoff; nothing is written here.
+async function casting(env: Env, source: string | null) {
+  const { results: sources } = await env.DB.prepare(
+    `SELECT source, COUNT(*) AS n FROM applicants WHERE noise IS NULL GROUP BY source ORDER BY MAX(id) DESC`,
+  ).all<{ source: string; n: number }>();
+  const { results: faces } = await env.DB.prepare(
+    `SELECT a.id, a.gender, a.source, a.test, a.score, (SELECT COUNT(*) FROM photos ph WHERE ph.applicant_id = a.id) AS n_photos
+     FROM applicants a WHERE a.noise IS NULL AND (?1 IS NULL OR a.source = ?1)`,
+  ).bind(source).all<{ id: number; gender: string | null; source: string; test: number; score: number | null; n_photos: number }>();
+  // Test batches are never retrained, so score them with the ranker as it is now (like the Lab).
+  const rs = faces.some((f) => f.test) ? await rankerScorer(env, true) : null;
+  const avg = await env.DB.prepare("SELECT AVG(score) AS m FROM applicants WHERE noise IS NULL AND test = 0 AND score IS NOT NULL")
+    .first<{ m: number | null }>();
+  const mean = avg?.m ?? 0;
+  const out = faces.map((f) => {
+    const raw = f.test ? (rs ? rs(f.id) : null) : f.score;
+    return { id: f.id, gender: f.gender, source: f.source, n_photos: f.n_photos, skor: raw == null ? null : Math.round(1000 / (1 + Math.exp(-(raw - mean)))) / 10 };
+  });
+  out.sort((a, b) => (b.skor ?? -1) - (a.skor ?? -1) || a.id - b.id);
+  return { sources, faces: out };
+}
+
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
@@ -526,6 +552,7 @@ export default {
     if (!who) return json({ error: "sign in first" }, 401);
     const only = url.searchParams.get("rater"); // results/map for one rater's taste
 
+    if (url.pathname === "/api/casting") return json(await casting(env, url.searchParams.get("source") || null));
     if (url.pathname === "/api/geometry") return json(await geometryPercentiles(env));
     const bh = url.pathname.match(/^\/api\/battles\/(\d+)$/);
     if (bh) return json(await battleHistory(env, Number(bh[1])));
