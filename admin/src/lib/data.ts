@@ -15,6 +15,7 @@ export const REASON: Record<string, string> = {
   not_frontal: 'Wajah tidak menghadap depan',
   multiple_faces: 'Ada beberapa wajah',
   unreadable: 'File tidak bisa dibuka',
+  no_gender: 'Gender tidak diisi',
 }
 export const reasonName = (r: string) => REASON[r] ?? r
 
