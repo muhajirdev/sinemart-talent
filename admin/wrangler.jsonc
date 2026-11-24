@@ -1,0 +1,14 @@
+// Casting admin ("Saring pelamar"): filter applicants by a score cutoff.
+// TanStack Start on Workers. It keeps no data of its own: /api/* and /img/*
+// go to the main app (worker/) through a service binding, so sign-in, scores
+// and photos are exactly the ones the picking page and Lab use.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sinemart-casting",
+  "account_id": "67f961331110b81774851ee4f54349b9",
+  "compatibility_date": "2026-10-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "src/server.ts",
+  "observability": { "enabled": true },
+  "services": [{ "binding": "TALENT", "service": "sinemart-talent", "remote": true }]
+}
