@@ -534,7 +534,13 @@ async function casting(env: Env, source: string | null) {
     return { id: f.id, gender: f.gender, source: f.source, n_photos: f.n_photos, skor: raw == null ? null : Math.round(1000 / (1 + Math.exp(-(raw - mean)))) / 10 };
   });
   out.sort((a, b) => (b.skor ?? -1) - (a.skor ?? -1) || a.id - b.id);
-  return { sources, faces: out };
+  // 2026-11-24 (Muajir: "in google form there are 2030 right, why in the web
+  // only 1895? ... should we show in the web as well"): people whose photo
+  // gave no usable face aren't applicants (nothing to score), so their list
+  // lives in R2 per source: [{ id, row, gender, reason }]. No photos, phones or emails.
+  const raw = source ? await env.IMAGES.get(`casting/unreadable/${source}.json`) : null;
+  const unreadable = raw ? ((await raw.json()) as { id: number; row: number | null; gender: string | null; reason: string }[]) : [];
+  return { sources, faces: out, unreadable };
 }
 
 export default {
