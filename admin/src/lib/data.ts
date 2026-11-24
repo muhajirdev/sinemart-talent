@@ -3,7 +3,10 @@
 export type Face = { id: number; gender: 'f' | 'm' | null; source: string; n_photos: number; skor: number | null }
 // People whose photo gave no usable face: listed so the admin can check them in the form by hand.
 export type Unreadable = { id: number; row: number | null; gender: 'f' | 'm' | null; reason: string }
-export type Casting = { sources: { source: string; n: number }[]; faces: Face[]; unreadable?: Unreadable[] }
+// tastes: raters with enough comparisons to have their own taste; taste: the one scoring this list (null = the team).
+export type Casting = { sources: { source: string; n: number }[]; faces: Face[]; unreadable?: Unreadable[]; tastes?: Taste[]; taste?: string | null }
+// key = rater name, or 'foto:<slug>' for a taste built from example photos.
+export type Taste = { key: string; name: string; n: number; kind: 'rater' | 'foto'; by?: string }
 
 export const REASON: Record<string, string> = {
   no_photo: 'Tidak ada foto',
