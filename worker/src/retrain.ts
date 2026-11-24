@@ -256,7 +256,7 @@ async function rankerZ(env: Env, faces: { id: number }[]) {
 // which: "test" = test batches only, "train" = everyone but test batches,
 // "all" = both. 2026-11-24: the 1-minute retrain reads "train" only, so a
 // big test batch (1,895 SCTV form faces, ~6 KB each) doesn't slow it down.
-async function loadFull(env: Env, which: "all" | "train" | "test" = "all") {
+export async function loadFull(env: Env, which: "all" | "train" | "test" = "all") {
   const join = "SELECT f.applicant_id AS id, f.z FROM full_z f JOIN applicants a ON a.id = f.applicant_id WHERE f.key = ?1";
   const sql = which === "test" ? `${join} AND a.test = 1`
     : which === "train" ? `${join} AND a.test = 0`

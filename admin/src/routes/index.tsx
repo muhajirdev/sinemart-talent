@@ -6,11 +6,14 @@ import { GENDER, formRow, reasonName, sourceName, toCsv, unreadableCsv, type Cas
 // kinda choose to filter out at what threshold", "contrast effect, at a glance
 // we can see top and bad", "default to cowok". The view lives in the URL, so a
 // link opens the same source, gender and cutoff.
-type Search = { source?: string; g: 'm' | 'f' | 'all'; cut: number; tab: 'lolos' | 'tersaring' | 'semua' | 'tidak-terbaca' }
+// 2026-11-24 (Muajir: "so we can change and choose the right taste"): taste =
+// score everyone by one rater's own picks instead of the whole team's.
+type Search = { source?: string; taste?: string; g: 'm' | 'f' | 'all'; cut: number; tab: 'lolos' | 'tersaring' | 'semua' | 'tidak-terbaca' }
 
 export const Route = createFileRoute('/')({
   validateSearch: (s: Record<string, unknown>): Search => ({
     source: s.source == null || s.source === '' ? undefined : String(s.source), // '2026' arrives as a number
+    taste: s.taste == null || s.taste === '' ? undefined : String(s.taste),
     g: s.g === 'f' || s.g === 'all' ? s.g : 'm',
     cut: Math.max(0, Math.min(100, Number(s.cut) || 0)),
     tab: s.tab === 'tersaring' || s.tab === 'semua' || s.tab === 'tidak-terbaca' ? s.tab : 'lolos',
@@ -68,6 +71,10 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [open, setOpen] = useState<Face | null>(null)
+  // 2026-11-24 (Muajir: "photos taste builder"): tap faces as Suka / Tidak, name it, save as a taste.
+  const [build, setBuild] = useState(false)
+  const [marks, setMarks] = useState<Map<number, 'suka' | 'tidak'>>(new Map())
+  const [reload, setReload] = useState(0)
   const [cut, setCut] = useState(search.cut) // follows the slider at once; the URL catches up
   useEffect(() => setCut(search.cut), [search.cut])
   useEffect(() => { const t = setTimeout(() => cut !== search.cut && set({ cut }), 250); return () => clearTimeout(t) }, [cut, search.cut, set])
@@ -75,7 +82,10 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
   useEffect(() => {
     let live = true
     setLoading(true); setError('')
-    fetch('/api/casting' + (search.source ? `?source=${encodeURIComponent(search.source)}` : ''), { headers: { 'x-rater-token': token } })
+    const q = new URLSearchParams()
+    if (search.source) q.set('source', search.source)
+    if (search.taste) q.set('taste', search.taste)
+    fetch('/api/casting' + (q.size ? `?${q}` : ''), { headers: { 'x-rater-token': token } })
       .then(async (r) => {
         if (r.status === 401) return onLogout()
         const d = (await r.json()) as Casting
@@ -87,7 +97,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
       .catch(() => live && setError('Gagal memuat. Coba muat ulang halaman.'))
       .finally(() => live && setLoading(false))
     return () => { live = false }
-  }, [search.source, token]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search.source, search.taste, token, reload]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const img = (id: number, n?: number) => `/img/${id}${n == null ? '' : `/${n}`}?t=${encodeURIComponent(token)}`
   const faces = useMemo(() => (data?.faces ?? []).filter((f) => search.g === 'all' || f.gender === search.g), [data, search.g])
@@ -95,7 +105,29 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
   const kept = useMemo(() => scored.filter((f) => f.skor! >= cut), [scored, cut])
   const dropped = useMemo(() => scored.filter((f) => f.skor! < cut), [scored, cut])
   const unread = useMemo(() => (data?.unreadable ?? []).filter((u) => search.g === 'all' || u.gender === search.g), [data, search.g])
-  const shown = search.tab === 'lolos' ? kept : search.tab === 'tersaring' ? dropped : faces
+  const shown = build ? faces : search.tab === 'lolos' ? kept : search.tab === 'tersaring' ? dropped : faces
+  const current = data?.tastes?.find((t) => t.key === data.taste)
+  const mark = (f: Face) => setMarks((m) => {
+    const n = new Map(m), v = m.get(f.id)
+    if (!v) n.set(f.id, 'suka'); else if (v === 'suka') n.set(f.id, 'tidak'); else n.delete(f.id)
+    return n
+  })
+  async function post(path: string, body: unknown) {
+    const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-rater-token': token }, body: JSON.stringify(body) })
+    return (await r.json()) as { key?: string; error?: string; ok?: boolean }
+  }
+  async function saveTaste(name: string) {
+    const ids = (k: 'suka' | 'tidak') => [...marks].filter(([, v]) => v === k).map(([id]) => id)
+    const d = await post('/api/casting/taste', { name, suka: ids('suka'), tidak: ids('tidak') })
+    if (d.error) return d.error
+    setBuild(false); setMarks(new Map()); set({ taste: d.key, cut: 0 }); setReload((x) => x + 1)
+    return ''
+  }
+  async function deleteTaste() {
+    if (!current || current.kind !== 'foto') return
+    await post('/api/casting/taste/delete', { key: current.key })
+    set({ taste: undefined }); setReload((x) => x + 1)
+  }
 
   // Cutoff that filters the bottom p% of this view.
   const cutForBottom = (p: number) => {
@@ -112,7 +144,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
     a.download = name
     a.click()
   }
-  const download = () => save(toCsv(kept), `lolos-${search.source ?? 'semua'}${g}-batas${cut}.csv`)
+  const download = () => save(toCsv(kept), `lolos-${search.source ?? 'semua'}${g}${data?.taste ? `-selera-${data.taste.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : ''}-batas${cut}.csv`)
 
   const n = Math.min(10, Math.floor(scored.length / 2))
   return (
@@ -129,6 +161,23 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
             <select value={search.source ?? ''} onChange={(e) => set({ source: e.target.value || undefined, cut: 0 })}>
               {data?.sources.map((s) => <option key={s.source} value={s.source}>{sourceName(s.source)} · {s.n}</option>)}
             </select>
+            <label className="lab">Selera</label>
+            <select value={search.taste ?? ''} onChange={(e) => set({ taste: e.target.value || undefined })}>
+              <option value="">Tim (semua penilai)</option>
+              {!!data?.tastes?.some((t) => t.kind === 'foto') && (
+                <optgroup label="Dari contoh foto">
+                  {data.tastes.filter((t) => t.kind === 'foto').map((t) => <option key={t.key} value={t.key}>{t.name} · {t.n} foto</option>)}
+                </optgroup>
+              )}
+              <optgroup label="Selera penilai">
+                {data?.tastes?.filter((t) => t.kind === 'rater').map((t) => <option key={t.key} value={t.key}>{t.name} · {t.n} pilihan</option>)}
+              </optgroup>
+            </select>
+            <div className="presets taste-actions">
+              {!build && <button className="chip" onClick={() => { setBuild(true); setMarks(new Map()) }}>+ Buat selera dari foto</button>}
+              {current?.kind === 'foto' && !build && <button className="chip" onClick={deleteTaste}>Hapus selera ini</button>}
+            </div>
+            {search.taste && data && data.taste !== search.taste && !loading && <p className="muted small">Selera ini belum cukup pilihan, jadi pakai selera tim.</p>}
             <label className="lab">Gender</label>
             <div className="seg">
               {(['m', 'f', 'all'] as const).map((g) => (
@@ -137,6 +186,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
             </div>
           </section>
 
+          {build && <Builder marks={marks} onSave={saveTaste} onCancel={() => { setBuild(false); setMarks(new Map()) }} />}
           <section className="panel">
             <div className="cutrow">
               <div><label className="lab">Batas skor</label><div className="big">{cut}</div></div>
@@ -158,7 +208,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
             <button className="primary wide" disabled={!kept.length} onClick={download}>Unduh {kept.length} yang lolos (CSV)</button>
           </section>
           <p className="muted small">
-            Skor 0–100 = seberapa besar peluang orang ini dipilih tim dibanding pelamar rata-rata. Geser batas untuk menyaring yang jelas kurang cocok.
+            Skor 0–100 = seberapa besar peluang orang ini dipilih {data?.taste ? data.taste : 'tim'} dibanding pelamar rata-rata. Geser batas untuk menyaring yang jelas kurang cocok.
           </p>
         </aside>
 
@@ -166,23 +216,24 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
           {error && <p className="err">{error}</p>}
           {loading && !data ? <div className="center muted">Memuat pelamar…</div> : (
             <>
-              {n > 0 && (
+              {build && <p className="build-hint">Ketuk wajah: sekali = <b className="good">Suka</b>, dua kali = <b className="bad">Tidak</b>, tiga kali = batal. Pilih yang jelas cocok dan jelas tidak cocok.</p>}
+              {n > 0 && !build && (
                 <section className="contrast">
                   <Strip title="Paling atas" tone="good" faces={scored.slice(0, n)} img={img} onOpen={setOpen} />
                   <Strip title="Paling bawah" tone="bad" faces={scored.slice(-n).reverse()} img={img} onOpen={setOpen} />
                 </section>
               )}
-              <nav className="tabs">
+              {!build && <nav className="tabs">
                 {([['lolos', `Lolos · ${kept.length}`], ['tersaring', `Tersaring · ${dropped.length}`], ['semua', `Semua · ${faces.length}`], ...(unread.length ? [['tidak-terbaca', `Foto tidak terbaca · ${unread.length}`] as const] : [])] as const).map(([t, label]) => (
                   <button key={t} aria-pressed={search.tab === t} onClick={() => set({ tab: t })}>{label}</button>
                 ))}
-              </nav>
-              {search.tab === 'tidak-terbaca' ? (
+              </nav>}
+              {search.tab === 'tidak-terbaca' && !build ? (
                 <Unread list={unread} onDownload={() => save(unreadableCsv(unread), `foto-tidak-terbaca-${search.source ?? 'semua'}${g}.csv`)} />
               ) : (
               <div className={`grid${loading ? ' dim' : ''}`}>
                 {shown.map((f) => (
-                  <Tile key={f.id} f={f} img={img} out={f.skor == null || f.skor < cut} onOpen={setOpen} showOut={search.tab === 'semua'} />
+                  <Tile key={f.id} f={f} img={img} out={f.skor == null || f.skor < cut} onOpen={build ? mark : setOpen} showOut={search.tab === 'semua' && !build} mark={build ? marks.get(f.id) : undefined} />
                 ))}
                 {!shown.length && <p className="muted">Tidak ada pelamar di sini.</p>}
               </div>
@@ -260,10 +311,11 @@ function Strip({ title, tone, faces, img, onOpen }: { title: string; tone: 'good
   )
 }
 
-function Tile({ f, img, out, showOut, onOpen }: { f: Face; img: ImgFn; out: boolean; showOut: boolean; onOpen: (f: Face) => void }) {
+function Tile({ f, img, out, showOut, onOpen, mark }: { f: Face; img: ImgFn; out: boolean; showOut: boolean; onOpen: (f: Face) => void; mark?: 'suka' | 'tidak' }) {
   return (
-    <button className={`tile${showOut && out ? ' out' : ''}`} onClick={() => onOpen(f)}>
+    <button className={`tile${showOut && out ? ' out' : ''}${mark ? ` mark-${mark}` : ''}`} onClick={() => onOpen(f)}>
       <img src={img(f.id)} alt="" loading="lazy" />
+      {mark && <span className="badge">{mark === 'suka' ? 'Suka' : 'Tidak'}</span>}
       <div className="meta">
         <b className={out ? 'bad' : 'good'}>{f.skor == null ? '–' : Math.round(f.skor)}</b>
         <span>#{f.id}</span>
@@ -310,5 +362,35 @@ function Viewer({ list, face, cut, img, onClose, onMove }: { list: Face[]; face:
         </div>
       </div>
     </div>
+  )
+}
+
+const PHOTO_MIN = 10 // same as the worker: fewer examples than this is close to a coin flip
+
+function Builder({ marks, onSave, onCancel }: { marks: Map<number, 'suka' | 'tidak'>; onSave: (name: string) => Promise<string>; onCancel: () => void }) {
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const suka = [...marks.values()].filter((v) => v === 'suka').length
+  const tidak = marks.size - suka
+  const ready = suka >= PHOTO_MIN && tidak >= PHOTO_MIN && name.trim().length > 0
+  async function save() {
+    setBusy(true); setError('')
+    setError(await onSave(name.trim()).catch(() => 'Gagal menyimpan. Coba lagi.'))
+    setBusy(false)
+  }
+  return (
+    <section className="panel builder">
+      <label className="lab">Selera baru dari foto</label>
+      <div className="stats">
+        <div><b className="good">{suka}</b><span>Suka</span></div>
+        <div><b className="bad">{tidak}</b><span>Tidak</span></div>
+      </div>
+      <p className="muted small">Minimal {PHOTO_MIN} Suka dan {PHOTO_MIN} Tidak. Makin banyak contoh, makin bisa dipercaya.</p>
+      <input placeholder="Nama selera, mis. Pemeran utama" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
+      <button className="primary wide" disabled={!ready || busy} onClick={save}>{busy ? 'Menyimpan…' : 'Simpan selera'}</button>
+      <button className="ghost wide" onClick={onCancel}>Batal</button>
+      {error && <p className="err">{error}</p>}
+    </section>
   )
 }

@@ -3,8 +3,10 @@
 // Static UI lives in ../public; everything under /api and /img lands here.
 
 import { territory } from "./map";
+import { FullLine } from "./full";
+import type { Pick } from "./hills";
 import {
-  ANSWERED, MIN_PICKS, RANKER, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, rankerScorer, raterAgreement, raterModel, retrain, tasteMatch, withoutRaters,
+  ANSWERED, MIN_PICKS, RANKER, REPEAT_EVERY, RETRAIN_EVERY, arrowFrom, hillsFrom, loadAlternate, loadFull, rankerScorer, raterAgreement, raterModel, retrain, tasteMatch, withoutRaters,
 } from "./retrain";
 
 export interface Env {
@@ -516,7 +518,108 @@ async function exportPicks(env: Env) {
 // casting admin"). Everyone in one source (or all), with the team's score on
 // the same 0-100 scale as the Lab: the chance to beat an average applicant.
 // The casting page (/casting.html) picks the cutoff; nothing is written here.
-async function casting(env: Env, source: string | null) {
+// 2026-11-24 (Muajir: "so we can change and choose the right taste"): a
+// "Selera" (taste) on the casting page = one rater's own straight line on the
+// ranker's full-size vectors, fitted fresh from that rater's comparisons only.
+// Offline (6 raters with 80+ comparisons, 10 held-out splits by person) a
+// rater's own line predicts their held-out picks about as well as the team
+// line on average (68.5% vs 67.3%), and far better for a rater whose taste
+// differs from the team (Oki Hartanto: 84% vs 45%). l2 = 0.1 did best for
+// one rater's few hundred picks (3e-3, the team's, overfits: 62%). Faces are
+// scored by their photo alone (no per-face correction). Not cached.
+const TASTE_MIN = 30; // comparisons before a rater shows up as a taste
+const TASTE_L2 = 0.1;
+// 2026-11-24 (Muajir: "I'd like to have photos taste builder as well"): a taste
+// built by hand from example faces: tap "Suka" / "Tidak", name it, save. Every
+// liked face is trained to beat every not-liked face of the same gender. Offline,
+// such a line from 10 + 10 faces predicted the team's held-out picks only 55%
+// (20 + 20: ~60-65%, team line 70%), so it is for a taste that really differs
+// from the team (a role, one person), and needs at least PHOTO_MIN of each.
+// l2 = 1.0 did best for so few examples. Stored in R2 casting/tastes/<slug>.json
+// (ids only, no photos or names of applicants), so no schema change.
+const PHOTO_MIN = 10;
+const PHOTO_L2 = 1.0;
+const PHOTO_PREFIX = "casting/tastes/";
+type PhotoTaste = { name: string; suka: number[]; tidak: number[]; by: string; at: string };
+export type Taste = { key: string; name: string; n: number; kind: "rater" | "foto"; by?: string };
+
+const slug = (name: string) => name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+
+async function photoTaste(env: Env, key: string) {
+  const o = await env.IMAGES.get(PHOTO_PREFIX + key + ".json");
+  return o ? ((await o.json()) as PhotoTaste) : null;
+}
+
+async function tastes(env: Env): Promise<Taste[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT rater AS name, COUNT(*) AS n FROM picks
+     WHERE (winner_id IS NOT NULL OR tie = 1) AND (kind IS NULL OR kind != 'repeat')
+       AND lower(rater) NOT LIKE 'test%' AND lower(rater) NOT LIKE 'claude%' -- test accounts aren't anyone's taste
+     GROUP BY rater HAVING n >= ?1 ORDER BY n DESC`,
+  ).bind(TASTE_MIN).all<{ name: string; n: number }>();
+  const listed = await env.IMAGES.list({ prefix: PHOTO_PREFIX });
+  const photos = (await Promise.all(listed.objects.map(async (o) => {
+    const key = o.key.slice(PHOTO_PREFIX.length, -".json".length), t = await photoTaste(env, key);
+    return t ? { key: "foto:" + key, name: t.name, n: t.suka.length + t.tidak.length, kind: "foto" as const, by: t.by } : null;
+  }))).filter((t): t is NonNullable<typeof t> => t != null);
+  return [...photos, ...results.map((r) => ({ key: r.name, name: r.name, n: r.n, kind: "rater" as const }))];
+}
+
+// A straight line fitted on these comparisons (indices into ids), as a scorer by applicant id.
+function lineScorer(ids: number[], picks: Pick[], full: Map<number, number[]>, l2: number) {
+  const X = ids.map((id) => full.get(id)!);
+  const line = new FullLine(X[0].length, ids.length).fit(X, picks, l2); // corrections only absorb odd faces in training
+  return (id: number) => { const x = full.get(id); return x ? line.image(x) : null; };
+}
+
+function indexer() {
+  const ids: number[] = [], at = new Map<number, number>();
+  return { ids, ix: (id: number) => { if (!at.has(id)) { at.set(id, ids.length); ids.push(id); } return at.get(id)!; } };
+}
+
+// One rater's line, or null when they have too few comparisons.
+async function raterTaste(env: Env, name: string, full: Map<number, number[]>) {
+  const { results } = await env.DB.prepare(
+    `SELECT left_id, right_id, winner_id, tie FROM picks
+     WHERE rater = ?1 AND (winner_id IS NOT NULL OR tie = 1) AND (kind IS NULL OR kind != 'repeat')`,
+  ).bind(name).all<{ left_id: number; right_id: number; winner_id: number | null; tie: number }>();
+  const { ids, ix } = indexer(), picks: Pick[] = [];
+  for (const r of results) {
+    if (!full.has(r.left_id) || !full.has(r.right_id)) continue;
+    if (r.tie) picks.push({ w: ix(r.left_id), l: ix(r.right_id), y: 0.5 });
+    else picks.push({ w: ix(r.winner_id!), l: ix(r.winner_id === r.left_id ? r.right_id : r.left_id) });
+  }
+  return picks.length < TASTE_MIN ? null : lineScorer(ids, picks, full, TASTE_L2);
+}
+
+// A photo taste's line: every liked face beats every not-liked face of the same
+// gender (any gender when one side of a gender is empty).
+async function builtTaste(env: Env, t: PhotoTaste, full: Map<number, number[]>) {
+  const all = [...t.suka, ...t.tidak].filter((id) => full.has(id));
+  if (!all.length) return null;
+  const { results } = await env.DB.prepare(`SELECT id, gender FROM applicants WHERE id IN (${all.map(() => "?").join(",")})`)
+    .bind(...all).all<{ id: number; gender: string | null }>();
+  const gender = new Map(results.map((r) => [r.id, r.gender]));
+  const suka = t.suka.filter((id) => full.has(id)), tidak = t.tidak.filter((id) => full.has(id));
+  const { ids, ix } = indexer(), picks: Pick[] = [];
+  for (const a of suka) for (const b of tidak) if (gender.get(a) === gender.get(b)) picks.push({ w: ix(a), l: ix(b) });
+  if (!picks.length) for (const a of suka) for (const b of tidak) picks.push({ w: ix(a), l: ix(b) });
+  return picks.length ? lineScorer(ids, picks, full, PHOTO_L2) : null;
+}
+
+async function saveTaste(req: Request, env: Env, who: Rater) {
+  const body = (await req.json().catch(() => ({}))) as { name?: string; suka?: unknown[]; tidak?: unknown[] };
+  const name = String(body.name ?? "").trim().slice(0, 60), key = slug(name);
+  const ids = (v: unknown[] | undefined) => [...new Set((v ?? []).map(Number).filter(Number.isInteger))].slice(0, 200);
+  const suka = ids(body.suka), tidak = ids(body.tidak).filter((id) => !suka.includes(id));
+  if (!key) return json({ error: "Beri nama selera dulu." }, 400);
+  if (suka.length < PHOTO_MIN || tidak.length < PHOTO_MIN) return json({ error: `Pilih minimal ${PHOTO_MIN} Suka dan ${PHOTO_MIN} Tidak.` }, 400);
+  const t: PhotoTaste = { name, suka, tidak, by: who.name, at: new Date().toISOString() };
+  await env.IMAGES.put(PHOTO_PREFIX + key + ".json", JSON.stringify(t), { httpMetadata: { contentType: "application/json" } });
+  return json({ key: "foto:" + key });
+}
+
+async function casting(env: Env, source: string | null, taste: string | null = null) {
   const { results: sources } = await env.DB.prepare(
     `SELECT source, COUNT(*) AS n FROM applicants WHERE noise IS NULL GROUP BY source ORDER BY MAX(id) DESC`,
   ).all<{ source: string; n: number }>();
@@ -528,9 +631,31 @@ async function casting(env: Env, source: string | null) {
   const rs = faces.some((f) => f.test) ? await rankerScorer(env, true) : null;
   const avg = await env.DB.prepare("SELECT AVG(score) AS m FROM applicants WHERE noise IS NULL AND test = 0 AND score IS NOT NULL")
     .first<{ m: number | null }>();
-  const mean = avg?.m ?? 0;
+  let mean = avg?.m ?? 0;
+  let scoreOf = (f: (typeof faces)[number]) => (f.test ? (rs ? rs(f.id) : null) : f.score);
+  // A rater's taste: same 0-100 scale, centred on the average applicant (non-test, not noise) under that taste.
+  const list = await tastes(env);
+  if (taste && list.some((t) => t.key === taste)) {
+    const photo = taste.startsWith("foto:") ? await photoTaste(env, taste.slice(5)) : null;
+    // Liked / not-liked faces may be test faces (e.g. the SCTV form), so photo tastes read every vector.
+    const full = await loadFull(env, photo || faces.some((f) => f.test) ? "all" : "train");
+    const ts = photo ? await builtTaste(env, photo, full) : await raterTaste(env, taste, full);
+    if (ts) {
+      const { results: pool } = await env.DB.prepare("SELECT id FROM applicants WHERE noise IS NULL AND test = 0").all<{ id: number }>();
+      const s = pool.map((p) => ts(p.id)).filter((v): v is number => v != null);
+      const sd = (v: number[], m: number) => Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, v.length));
+      mean = s.length ? s.reduce((a, b) => a + b, 0) / s.length : 0;
+      // A taste from a few hundred picks (or 20 photos) is heavily regularised, so its
+      // raw scores bunch near 50 and the histogram becomes one bar. Stretch it to the
+      // team's spread over the same pool, so the cutoff slider works the same way.
+      const { results: team } = await env.DB.prepare("SELECT score FROM applicants WHERE noise IS NULL AND test = 0 AND score IS NOT NULL").all<{ score: number }>();
+      const tm = team.reduce((a, b) => a + b.score, 0) / Math.max(1, team.length);
+      const k = sd(s, mean) > 0 && team.length ? sd(team.map((t) => t.score), tm) / sd(s, mean) : 1;
+      scoreOf = (f) => { const v = ts(f.id); return v == null ? null : mean + k * (v - mean); };
+    } else taste = null;
+  } else taste = null;
   const out = faces.map((f) => {
-    const raw = f.test ? (rs ? rs(f.id) : null) : f.score;
+    const raw = scoreOf(f);
     return { id: f.id, gender: f.gender, source: f.source, n_photos: f.n_photos, skor: raw == null ? null : Math.round(1000 / (1 + Math.exp(-(raw - mean)))) / 10 };
   });
   out.sort((a, b) => (b.skor ?? -1) - (a.skor ?? -1) || a.id - b.id);
@@ -540,7 +665,7 @@ async function casting(env: Env, source: string | null) {
   // lives in R2 per source: [{ id, row, gender, reason }]. No photos, phones or emails.
   const raw = source ? await env.IMAGES.get(`casting/unreadable/${source}.json`) : null;
   const unreadable = raw ? ((await raw.json()) as { id: number; row: number | null; gender: string | null; reason: string }[]) : [];
-  return { sources, faces: out, unreadable };
+  return { sources, faces: out, unreadable, tastes: list, taste };
 }
 
 export default {
@@ -558,7 +683,14 @@ export default {
     if (!who) return json({ error: "sign in first" }, 401);
     const only = url.searchParams.get("rater"); // results/map for one rater's taste
 
-    if (url.pathname === "/api/casting") return json(await casting(env, url.searchParams.get("source") || null));
+    if (url.pathname === "/api/casting") return json(await casting(env, url.searchParams.get("source") || null, url.searchParams.get("taste") || null));
+    if (url.pathname === "/api/casting/taste" && req.method === "POST") return saveTaste(req, env, who);
+    if (url.pathname === "/api/casting/taste/delete" && req.method === "POST") {
+      const key = String(((await req.json().catch(() => ({}))) as { key?: string }).key ?? "").replace(/^foto:/, "");
+      if (!key || key !== slug(key)) return json({ error: "bad key" }, 400);
+      await env.IMAGES.delete(PHOTO_PREFIX + key + ".json");
+      return json({ ok: true });
+    }
     if (url.pathname === "/api/geometry") return json(await geometryPercentiles(env));
     const bh = url.pathname.match(/^\/api\/battles\/(\d+)$/);
     if (bh) return json(await battleHistory(env, Number(bh[1])));
