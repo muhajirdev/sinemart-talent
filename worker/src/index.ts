@@ -612,7 +612,7 @@ async function saveTaste(req: Request, env: Env, who: Rater) {
   const name = String(body.name ?? "").trim().slice(0, 60), key = slug(name);
   const ids = (v: unknown[] | undefined) => [...new Set((v ?? []).map(Number).filter(Number.isInteger))].slice(0, 200);
   const suka = ids(body.suka), tidak = ids(body.tidak).filter((id) => !suka.includes(id));
-  if (!key) return json({ error: "Beri nama selera dulu." }, 400);
+  if (!key) return json({ error: "Beri nama taste dulu." }, 400);
   if (suka.length < PHOTO_MIN || tidak.length < PHOTO_MIN) return json({ error: `Pilih minimal ${PHOTO_MIN} Suka dan ${PHOTO_MIN} Tidak.` }, 400);
   const t: PhotoTaste = { name, suka, tidak, by: who.name, at: new Date().toISOString() };
   await env.IMAGES.put(PHOTO_PREFIX + key + ".json", JSON.stringify(t), { httpMetadata: { contentType: "application/json" } });

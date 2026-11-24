@@ -144,7 +144,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
     a.download = name
     a.click()
   }
-  const download = () => save(toCsv(kept), `lolos-${search.source ?? 'semua'}${g}${data?.taste ? `-selera-${data.taste.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : ''}-batas${cut}.csv`)
+  const download = () => save(toCsv(kept), `lolos-${search.source ?? 'semua'}${g}${data?.taste ? `-taste-${data.taste.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : ''}-batas${cut}.csv`)
 
   const n = Math.min(10, Math.floor(scored.length / 2))
   return (
@@ -161,7 +161,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
             <select value={search.source ?? ''} onChange={(e) => set({ source: e.target.value || undefined, cut: 0 })}>
               {data?.sources.map((s) => <option key={s.source} value={s.source}>{sourceName(s.source)} · {s.n}</option>)}
             </select>
-            <label className="lab">Selera</label>
+            <label className="lab">Taste</label>
             <select value={search.taste ?? ''} onChange={(e) => set({ taste: e.target.value || undefined })}>
               <option value="">Tim (semua penilai)</option>
               {!!data?.tastes?.some((t) => t.kind === 'foto') && (
@@ -169,15 +169,15 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
                   {data.tastes.filter((t) => t.kind === 'foto').map((t) => <option key={t.key} value={t.key}>{t.name} · {t.n} foto</option>)}
                 </optgroup>
               )}
-              <optgroup label="Selera penilai">
+              <optgroup label="Taste penilai">
                 {data?.tastes?.filter((t) => t.kind === 'rater').map((t) => <option key={t.key} value={t.key}>{t.name} · {t.n} pilihan</option>)}
               </optgroup>
             </select>
             <div className="presets taste-actions">
-              {!build && <button className="chip" onClick={() => { setBuild(true); setMarks(new Map()) }}>+ Buat selera dari foto</button>}
-              {current?.kind === 'foto' && !build && <button className="chip" onClick={deleteTaste}>Hapus selera ini</button>}
+              {!build && <button className="chip" onClick={() => { setBuild(true); setMarks(new Map()) }}>+ Buat taste dari foto</button>}
+              {current?.kind === 'foto' && !build && <button className="chip" onClick={deleteTaste}>Hapus taste ini</button>}
             </div>
-            {search.taste && data && data.taste !== search.taste && !loading && <p className="muted small">Selera ini belum cukup pilihan, jadi pakai selera tim.</p>}
+            {search.taste && data && data.taste !== search.taste && !loading && <p className="muted small">Taste ini belum cukup pilihan, jadi pakai taste tim.</p>}
             <label className="lab">Gender</label>
             <div className="seg">
               {(['m', 'f', 'all'] as const).map((g) => (
@@ -381,14 +381,14 @@ function Builder({ marks, onSave, onCancel }: { marks: Map<number, 'suka' | 'tid
   }
   return (
     <section className="panel builder">
-      <label className="lab">Selera baru dari foto</label>
+      <label className="lab">Taste baru dari foto</label>
       <div className="stats">
         <div><b className="good">{suka}</b><span>Suka</span></div>
         <div><b className="bad">{tidak}</b><span>Tidak</span></div>
       </div>
       <p className="muted small">Minimal {PHOTO_MIN} Suka dan {PHOTO_MIN} Tidak. Makin banyak contoh, makin bisa dipercaya.</p>
-      <input placeholder="Nama selera, mis. Pemeran utama" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
-      <button className="primary wide" disabled={!ready || busy} onClick={save}>{busy ? 'Menyimpan…' : 'Simpan selera'}</button>
+      <input placeholder="Nama taste, mis. Pemeran utama" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
+      <button className="primary wide" disabled={!ready || busy} onClick={save}>{busy ? 'Menyimpan…' : 'Simpan taste'}</button>
       <button className="ghost wide" onClick={onCancel}>Batal</button>
       {error && <p className="err">{error}</p>}
     </section>
