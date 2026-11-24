@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { GENDER, formRow, sourceName, toCsv, type Casting, type Face } from '#/lib/data'
+import { GENDER, formRow, reasonName, sourceName, toCsv, unreadableCsv, type Casting, type Face, type Unreadable } from '#/lib/data'
 
 // 2026-11-24 (Muajir): "allow the filtering or threshold ... so the admin can
 // kinda choose to filter out at what threshold", "contrast effect, at a glance
 // we can see top and bad", "default to cowok". The view lives in the URL, so a
 // link opens the same source, gender and cutoff.
-type Search = { source?: string; g: 'm' | 'f' | 'all'; cut: number; tab: 'lolos' | 'tersaring' | 'semua' }
+type Search = { source?: string; g: 'm' | 'f' | 'all'; cut: number; tab: 'lolos' | 'tersaring' | 'semua' | 'tidak-terbaca' }
 
 export const Route = createFileRoute('/')({
   validateSearch: (s: Record<string, unknown>): Search => ({
     source: s.source == null || s.source === '' ? undefined : String(s.source), // '2026' arrives as a number
     g: s.g === 'f' || s.g === 'all' ? s.g : 'm',
     cut: Math.max(0, Math.min(100, Number(s.cut) || 0)),
-    tab: s.tab === 'tersaring' || s.tab === 'semua' ? s.tab : 'lolos',
+    tab: s.tab === 'tersaring' || s.tab === 'semua' || s.tab === 'tidak-terbaca' ? s.tab : 'lolos',
   }),
   component: Page,
 })
@@ -94,6 +94,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
   const scored = useMemo(() => faces.filter((f) => f.skor != null), [faces])
   const kept = useMemo(() => scored.filter((f) => f.skor! >= cut), [scored, cut])
   const dropped = useMemo(() => scored.filter((f) => f.skor! < cut), [scored, cut])
+  const unread = useMemo(() => (data?.unreadable ?? []).filter((u) => search.g === 'all' || u.gender === search.g), [data, search.g])
   const shown = search.tab === 'lolos' ? kept : search.tab === 'tersaring' ? dropped : faces
 
   // Cutoff that filters the bottom p% of this view.
@@ -104,13 +105,14 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
     return Math.ceil(asc[i].skor!)
   }
 
-  function download() {
+  const g = search.g === 'all' ? '' : `-${GENDER[search.g].toLowerCase()}`
+  function save(csv: string, name: string) {
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([toCsv(kept)], { type: 'text/csv' }))
-    const g = search.g === 'all' ? '' : `-${GENDER[search.g].toLowerCase()}`
-    a.download = `lolos-${search.source ?? 'semua'}${g}-batas${cut}.csv`
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    a.download = name
     a.click()
   }
+  const download = () => save(toCsv(kept), `lolos-${search.source ?? 'semua'}${g}-batas${cut}.csv`)
 
   const n = Math.min(10, Math.floor(scored.length / 2))
   return (
@@ -171,16 +173,20 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
                 </section>
               )}
               <nav className="tabs">
-                {([['lolos', `Lolos · ${kept.length}`], ['tersaring', `Tersaring · ${dropped.length}`], ['semua', `Semua · ${faces.length}`]] as const).map(([t, label]) => (
+                {([['lolos', `Lolos · ${kept.length}`], ['tersaring', `Tersaring · ${dropped.length}`], ['semua', `Semua · ${faces.length}`], ...(unread.length ? [['tidak-terbaca', `Foto tidak terbaca · ${unread.length}`] as const] : [])] as const).map(([t, label]) => (
                   <button key={t} aria-pressed={search.tab === t} onClick={() => set({ tab: t })}>{label}</button>
                 ))}
               </nav>
+              {search.tab === 'tidak-terbaca' ? (
+                <Unread list={unread} onDownload={() => save(unreadableCsv(unread), `foto-tidak-terbaca-${search.source ?? 'semua'}${g}.csv`)} />
+              ) : (
               <div className={`grid${loading ? ' dim' : ''}`}>
                 {shown.map((f) => (
                   <Tile key={f.id} f={f} img={img} out={f.skor == null || f.skor < cut} onOpen={setOpen} showOut={search.tab === 'semua'} />
                 ))}
                 {!shown.length && <p className="muted">Tidak ada pelamar di sini.</p>}
               </div>
+              )}
             </>
           )}
         </main>
@@ -188,6 +194,33 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
 
       {open && <Viewer list={shown.includes(open) ? shown : scored} face={open} cut={cut} img={img} onClose={() => setOpen(null)} onMove={setOpen} />}
     </div>
+  )
+}
+
+function Unread({ list, onDownload }: { list: Unreadable[]; onDownload: () => void }) {
+  const counts = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const u of list) m.set(u.reason, (m.get(u.reason) ?? 0) + 1)
+    return [...m].sort((a, b) => b[1] - a[1])
+  }, [list])
+  return (
+    <section>
+      <div className="unread-head">
+        <p className="muted">
+          Foto mereka tidak bisa dinilai, jadi belum ada skor. Cek manual di form lewat nomor barisnya.
+        </p>
+        <button className="chip" onClick={onDownload}>Unduh daftar (CSV)</button>
+      </div>
+      <div className="reasons">{counts.map(([r, n]) => <span key={r} className="chip static">{reasonName(r)} · {n}</span>)}</div>
+      <table className="list">
+        <thead><tr><th>Baris form</th><th>No. pelamar</th><th>Gender</th><th>Alasan</th></tr></thead>
+        <tbody>
+          {list.map((u) => (
+            <tr key={u.id}><td><b>{u.row ?? '–'}</b></td><td className="muted">#{u.id}</td><td>{u.gender ? GENDER[u.gender] : '–'}</td><td>{reasonName(u.reason)}</td></tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   )
 }
 
