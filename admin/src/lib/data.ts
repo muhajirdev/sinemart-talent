@@ -4,7 +4,7 @@ export type Face = { id: number; gender: 'f' | 'm' | null; source: string; n_pho
 // People whose photo gave no usable face: listed so the admin can check them in the form by hand.
 export type Unreadable = { id: number; row: number | null; gender: 'f' | 'm' | null; reason: string }
 // tastes: raters with enough comparisons to have their own taste; taste: the one scoring this list (null = the team).
-export type Casting = { sources: { source: string; n: number }[]; faces: Face[]; unreadable?: Unreadable[]; tastes?: Taste[]; taste?: string | null }
+export type Casting = { sources: { source: string; n: number }[]; faces: Face[]; unreadable?: Unreadable[]; tastes?: Taste[]; taste?: string | null; tags?: Record<number, string[]> }
 // key = rater name, or 'foto:<slug>' for a taste built from example photos.
 export type Taste = { key: string; name: string; n: number; kind: 'rater' | 'foto'; by?: string }
 
@@ -44,4 +44,19 @@ export function toCsv(faces: Face[]) {
   const head = ['no_pelamar', 'baris_form', 'gender', 'sumber', 'skor']
   const rows = faces.map((f) => [f.id, formRow(f) ?? '', f.gender ? GENDER[f.gender].toLowerCase() : '', sourceName(f.source), f.skor ?? ''])
   return [head, ...rows].map((r) => r.join(',')).join('\n') + '\n'
+}
+
+// 2026-11-25 (Muajir: "a way to mark or tag"): ready-made tags; any other word can be typed.
+export const PRESET_TAGS = ['Shortlist', 'Panggil casting', 'Ragu', 'Tidak cocok']
+
+// 2026-11-25 (Muajir: "an option to export ... as excel or csv"): everyone in the
+// view, best first, with Lolos / Tersaring at the current cutoff and their tags.
+export type ExportRow = { f: Face; status: string; tags: string[] }
+export const EXPORT_HEAD = ['No. pelamar', 'Baris form', 'Gender', 'Sumber', 'Skor', 'Status', 'Tag']
+export function exportCells(r: ExportRow): (string | number | null)[] {
+  return [r.f.id, formRow(r.f), r.f.gender ? GENDER[r.f.gender] : null, sourceName(r.f.source), r.f.skor, r.status, r.tags.join(', ') || null]
+}
+export function exportCsv(rows: ExportRow[]) {
+  const q = (v: string | number | null) => (v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v))
+  return [EXPORT_HEAD, ...rows.map(exportCells)].map((r) => r.map(q).join(',')).join('\n') + '\n'
 }
