@@ -320,3 +320,22 @@ app**, it would overwrite the live straight-line scores with hills scores
 cd pipeline && python -m pytest -q    # heads, sampler, band check, crop geometry, manifest, parts
 cd worker && npx tsc --noEmit
 ```
+
+## Daily top-up from the SCTV Mencari Bintang form
+
+A scheduled cloud session runs this once a day (since 2026-11-25). It adds
+only sign-ups not in D1 yet, so re-running is safe:
+
+```bash
+cd pipeline && pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements.txt
+apt-get install -y libegl1 libgles2          # grey background (mediapipe)
+curl -LO https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+curl -LO https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite
+CLOUDFLARE_API_TOKEN=... python -m sinemart.sctv <RESPONSES_SHEET_ID> /tmp/sctv \
+  --yunet face_detection_yunet_2023mar.onnx --seg selfie_segmenter.tflite   # --dry-run to only look
+```
+
+New people land as a test batch (`source = 'sctv-mencari-bintang-2026'`,
+ids 910000 + response index); those with no usable face go on the casting
+page's "Foto tidak terbaca" list (R2 `casting/unreadable/<source>.json`).
+Details in `pipeline/sinemart/sctv.py`.
