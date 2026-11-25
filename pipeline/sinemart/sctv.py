@@ -8,7 +8,8 @@ Only sign-ups not in D1 yet are touched, so a daily run takes minutes and
 re-running is safe. For each new person: download the close-up and full-body
 photos, crop faces (the normal gate first; whoever has no usable face gets a
 second, looser pass, stage '<TAG>-relaxed'), embed with the ranker's model,
-and load as a test batch: applicants (test = 1, source = TAG), full_z with the
+and load as a test batch (names for the casting page go to R2
+casting/names/<TAG>.json on every run): applicants (test = 1, source = TAG), full_z with the
 live centre and scale (R2 models/m6/full_norm.json), crops to R2. Whoever
 still has no usable face goes on the casting page's "Foto tidak terbaca" list
 (R2 casting/unreadable/<TAG>.json).
@@ -142,6 +143,18 @@ def crop(manifest: Path, root: Path, out: Path, yunet: str, seg: str | None, loo
     return people
 
 
+def write_names(header: list[str], rows: list[list[str]]) -> bool:
+    """Names for the casting page (R2 casting/names/<TAG>.json: id -> [full
+    name, nickname], whitespace collapsed, 80 chars max). Names only: phones
+    and emails never leave the sheet. 2026-11-25: Muajir asked for names."""
+    low = [h.lower() for h in header]
+    full = next(i for i, h in enumerate(low) if h.startswith("nama lengkap"))
+    nick = next(i for i, h in enumerate(low) if h.startswith("nama panggilan"))
+    clean = lambda r, i: " ".join((r[i] if i < len(r) else "").split())[:80]  # noqa: E731
+    names = {str(ID_BASE + n): [clean(r, full), clean(r, nick)] for n, r in enumerate(rows)}
+    return r2_put(f"casting/names/{TAG}.json", data=json.dumps(names, ensure_ascii=False).encode(), ctype="application/json")
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("sheet_id")
@@ -160,6 +173,8 @@ def main(argv: list[str] | None = None) -> None:
     tried = {u["id"] for u in old_unread}
     new = [i for i in range(len(rows)) if ID_BASE + i not in have and ID_BASE + i not in tried]
     print(f"{len(rows)} sign-ups, {len(have)} in the app, {len(tried)} unreadable before, {len(new)} new")
+    if not a.dry_run:
+        print("names updated" if write_names(header, rows) else "names upload FAILED")
     if not new:
         return
 
