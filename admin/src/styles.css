@@ -32,7 +32,8 @@ select, input { font: inherit; color: inherit; }
 .app { min-height: 100vh; }
 .top { position: sticky; top: 0; z-index: 10; display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
 .layout { display: grid; grid-template-columns: 320px 1fr; gap: 24px; padding: 20px 24px 48px; max-width: 1440px; margin: 0 auto; }
-.side { position: sticky; top: 72px; align-self: start; display: grid; gap: 14px; }
+.side { position: sticky; top: 72px; align-self: start; display: grid; gap: 14px; max-height: calc(100vh - 84px); overflow-y: auto; overscroll-behavior: contain; padding-bottom: 8px; }
+/* 2026-11-25: on a laptop screen the sticky side panel was taller than the window, so the download button couldn't be reached. */
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
 .lab { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 6px; }
 .panel select { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); margin-bottom: 14px; }
@@ -106,7 +107,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); margin: 4px 0 10px
 
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; padding: 14px 16px 40px; gap: 16px; }
-  .side { position: static; }
+  .side { position: static; max-height: none; overflow: visible; }
   .top { padding: 10px 16px; }
   .contrast { gap: 10px; }
   .strip { padding: 10px; }
