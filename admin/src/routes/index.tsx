@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { EXPORT_HEAD, GENDER, PRESET_TAGS, exportCells, exportCsv, formRow, reasonName, sourceName, toCsv, unreadableCsv, type Casting, type ExportRow, type Face, type Unreadable } from '#/lib/data'
+import { EXPORT_HEAD, GENDER, displayName, PRESET_TAGS, exportCells, exportCsv, formRow, reasonName, sourceName, toCsv, unreadableCsv, type Casting, type ExportRow, type Face, type Unreadable } from '#/lib/data'
 
 // 2026-11-24 (Muajir): "allow the filtering or threshold ... so the admin can
 // kinda choose to filter out at what threshold", "contrast effect, at a glance
@@ -8,13 +8,14 @@ import { EXPORT_HEAD, GENDER, PRESET_TAGS, exportCells, exportCsv, formRow, reas
 // link opens the same source, gender and cutoff.
 // 2026-11-24 (Muajir: "so we can change and choose the right taste"): taste =
 // score everyone by one rater's own picks instead of the whole team's.
-type Search = { source?: string; taste?: string; tag?: string; g: 'm' | 'f' | 'all'; cut: number; tab: 'lolos' | 'tersaring' | 'semua' | 'tidak-terbaca' }
+type Search = { source?: string; taste?: string; tag?: string; q?: string; g: 'm' | 'f' | 'all'; cut: number; tab: 'lolos' | 'tersaring' | 'semua' | 'tidak-terbaca' }
 
 export const Route = createFileRoute('/')({
   validateSearch: (s: Record<string, unknown>): Search => ({
     source: s.source == null || s.source === '' ? undefined : String(s.source), // '2026' arrives as a number
     taste: s.taste == null || s.taste === '' ? undefined : String(s.taste),
     tag: s.tag == null || s.tag === '' ? undefined : String(s.tag),
+    q: s.q == null || s.q === '' ? undefined : String(s.q),
     g: s.g === 'f' || s.g === 'all' ? s.g : 'm',
     cut: Math.max(0, Math.min(100, Number(s.cut) || 0)),
     tab: s.tab === 'tersaring' || s.tab === 'semua' || s.tab === 'tidak-terbaca' ? s.tab : 'lolos',
@@ -104,7 +105,8 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
 
   const img = (id: number, n?: number) => `/img/${id}${n == null ? '' : `/${n}`}?t=${encodeURIComponent(token)}`
   const faces = useMemo(() => (data?.faces ?? []).filter((f) => (search.g === 'all' || f.gender === search.g)
-    && (!search.tag || (search.tag === '-' ? !tags.get(f.id)?.length : tags.get(f.id)?.includes(search.tag)))), [data, search.g, search.tag, tags])
+    && (!search.tag || (search.tag === '-' ? !tags.get(f.id)?.length : tags.get(f.id)?.includes(search.tag)))
+    && (!search.q || `${f.id} ${f.name ?? ''} ${f.nick ?? ''}`.toLowerCase().includes(search.q.toLowerCase()))), [data, search.g, search.tag, search.q, tags])
   // Every tag in use (with counts in this gender), presets first.
   const tagCounts = useMemo(() => {
     const c = new Map<string, number>(PRESET_TAGS.map((t) => [t, 0]))
@@ -166,8 +168,8 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
     const { default: writeXlsxFile } = await import('write-excel-file/browser')
     const bold = (v: string) => ({ value: v, fontWeight: 'bold' as const })
     const people = [EXPORT_HEAD.map(bold), ...rows().map(exportCells)]
-    const sheets = [{ data: people, sheet: 'Pelamar', stickyRowsCount: 1, columns: [14, 11, 9, 26, 7, 14, 30].map((width) => ({ width })) }]
-    if (unread.length) sheets.push({ data: [['No. pelamar', 'Baris form', 'Gender', 'Alasan'].map(bold), ...unread.map((u) => [u.id, u.row, u.gender ? GENDER[u.gender] : null, reasonName(u.reason)])], sheet: 'Foto tidak terbaca', stickyRowsCount: 1, columns: [14, 11, 9, 28].map((width) => ({ width })) })
+    const sheets = [{ data: people, sheet: 'Pelamar', stickyRowsCount: 1, columns: [12, 28, 14, 10, 8, 24, 7, 14, 28].map((width) => ({ width })) }]
+    if (unread.length) sheets.push({ data: [['No. pelamar', 'Nama', 'Baris form', 'Gender', 'Alasan'].map(bold), ...unread.map((u) => [u.id, u.name ?? null, u.row, u.gender ? GENDER[u.gender] : null, reasonName(u.reason)])], sheet: 'Foto tidak terbaca', stickyRowsCount: 1, columns: [12, 28, 10, 8, 26].map((width) => ({ width })) })
     await writeXlsxFile(sheets as never).toFile(`pelamar-${base}-batas${cut}.xlsx`)
   }
   const downloadCsv = () => save(exportCsv(rows()), `pelamar-${base}-batas${cut}.csv`)
@@ -261,6 +263,8 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
                   <Strip title="Paling bawah" tone="bad" faces={scored.slice(-n).reverse()} img={img} onOpen={setOpen} />
                 </section>
               )}
+              {!build && <input className="search" type="search" placeholder="Cari nama atau nomor pelamar…" defaultValue={search.q ?? ''}
+                onChange={(e) => set({ q: e.target.value.trim() || undefined })} />}
               {!build && <nav className="tabs">
                 {([['lolos', `Lolos · ${kept.length}`], ['tersaring', `Tersaring · ${dropped.length}`], ['semua', `Semua · ${faces.length}`], ...(unread.length ? [['tidak-terbaca', `Foto tidak terbaca · ${unread.length}`] as const] : [])] as const).map(([t, label]) => (
                   <button key={t} aria-pressed={search.tab === t} onClick={() => set({ tab: t })}>{label}</button>
@@ -302,10 +306,10 @@ function Unread({ list, onDownload }: { list: Unreadable[]; onDownload: () => vo
       </div>
       <div className="reasons">{counts.map(([r, n]) => <span key={r} className="chip static">{reasonName(r)} · {n}</span>)}</div>
       <table className="list">
-        <thead><tr><th>Baris form</th><th>No. pelamar</th><th>Gender</th><th>Alasan</th></tr></thead>
+        <thead><tr><th>Baris form</th><th>Nama</th><th>No. pelamar</th><th>Gender</th><th>Alasan</th></tr></thead>
         <tbody>
           {list.map((u) => (
-            <tr key={u.id}><td><b>{u.row ?? '–'}</b></td><td className="muted">#{u.id}</td><td>{u.gender ? GENDER[u.gender] : '–'}</td><td>{reasonName(u.reason)}</td></tr>
+            <tr key={u.id}><td><b>{u.row ?? '–'}</b></td><td>{displayName(u) ?? '–'}</td><td className="muted">#{u.id}</td><td>{u.gender ? GENDER[u.gender] : '–'}</td><td>{reasonName(u.reason)}</td></tr>
           ))}
         </tbody>
       </table>
@@ -359,6 +363,7 @@ function Tile({ f, tags, img, out, showOut, onOpen, mark }: { f: Face; tags?: st
         <b className={out ? 'bad' : 'good'}>{f.skor == null ? '–' : Math.round(f.skor)}</b>
         <span>#{f.id}</span>
       </div>
+      {displayName(f) && <div className="name" title={displayName(f)!}>{displayName(f)}</div>}
     </button>
   )
 }
@@ -391,6 +396,7 @@ function Viewer({ list, face, cut, img, tags, allTags, onTag, onClose, onMove }:
         <div className="info">
           <div className={`score ${out ? 'bad' : 'good'}`}>{face.skor == null ? '–' : Math.round(face.skor)}</div>
           <div>
+            <div className="vname">{displayName(face) ?? 'Tanpa nama'}</div>
             <div className="tag">{out ? 'Tersaring' : 'Lolos'}</div>
             <div className="muted small">#{face.id}{row ? ` · baris ${row} di form` : ''} · {face.gender ? GENDER[face.gender] : '–'} · {sourceName(face.source)}</div>
           </div>

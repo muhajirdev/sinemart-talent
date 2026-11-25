@@ -1,8 +1,11 @@
 // What /api/casting (worker/src/index.ts) sends: everyone in one source with
 // the team's score on the Lab's 0-100 scale (chance to beat an average applicant).
-export type Face = { id: number; gender: 'f' | 'm' | null; source: string; n_photos: number; skor: number | null }
+export type Face = { id: number; gender: 'f' | 'm' | null; source: string; n_photos: number; skor: number | null; name?: string | null; nick?: string | null }
 // People whose photo gave no usable face: listed so the admin can check them in the form by hand.
-export type Unreadable = { id: number; row: number | null; gender: 'f' | 'm' | null; reason: string }
+export type Unreadable = { id: number; row: number | null; gender: 'f' | 'm' | null; reason: string; name?: string | null; nick?: string | null }
+// Full name, with the nickname when it adds something.
+export const displayName = (x: { name?: string | null; nick?: string | null }) =>
+  x.name && x.name !== '-' ? x.name + (x.nick && x.nick.toLowerCase() !== x.name.toLowerCase() ? ` (${x.nick})` : '') : x.nick || null
 // tastes: raters with enough comparisons to have their own taste; taste: the one scoring this list (null = the team).
 export type Casting = { sources: { source: string; n: number }[]; faces: Face[]; unreadable?: Unreadable[]; tastes?: Taste[]; taste?: string | null; tags?: Record<number, string[]> }
 // key = rater name, or 'foto:<slug>' for a taste built from example photos.
@@ -23,8 +26,8 @@ export const REASON: Record<string, string> = {
 export const reasonName = (r: string) => REASON[r] ?? r
 
 export function unreadableCsv(list: Unreadable[]) {
-  const rows = list.map((u) => [u.id, u.row ?? '', u.gender ? GENDER[u.gender].toLowerCase() : '', reasonName(u.reason)])
-  return [['no_pelamar', 'baris_form', 'gender', 'alasan'], ...rows].map((r) => r.join(',')).join('\n') + '\n'
+  const rows = list.map((u) => [u.id, (u.name ?? '').replace(/,/g, ' '), u.row ?? '', u.gender ? GENDER[u.gender].toLowerCase() : '', reasonName(u.reason)])
+  return [['no_pelamar', 'nama', 'baris_form', 'gender', 'alasan'], ...rows].map((r) => r.join(',')).join('\n') + '\n'
 }
 
 export const SOURCE_NAME: Record<string, string> = {
@@ -41,8 +44,8 @@ export const formRow = (f: Face) => (f.source === 'sctv-mencari-bintang-2026' ? 
 export const GENDER = { m: 'Cowok', f: 'Cewek' } as const
 
 export function toCsv(faces: Face[]) {
-  const head = ['no_pelamar', 'baris_form', 'gender', 'sumber', 'skor']
-  const rows = faces.map((f) => [f.id, formRow(f) ?? '', f.gender ? GENDER[f.gender].toLowerCase() : '', sourceName(f.source), f.skor ?? ''])
+  const head = ['no_pelamar', 'nama', 'baris_form', 'gender', 'sumber', 'skor']
+  const rows = faces.map((f) => [f.id, (f.name ?? '').replace(/,/g, ' '), formRow(f) ?? '', f.gender ? GENDER[f.gender].toLowerCase() : '', sourceName(f.source), f.skor ?? ''])
   return [head, ...rows].map((r) => r.join(',')).join('\n') + '\n'
 }
 
@@ -52,9 +55,9 @@ export const PRESET_TAGS = ['Shortlist', 'Panggil casting', 'Ragu', 'Tidak cocok
 // 2026-11-25 (Muajir: "an option to export ... as excel or csv"): everyone in the
 // view, best first, with Lolos / Tersaring at the current cutoff and their tags.
 export type ExportRow = { f: Face; status: string; tags: string[] }
-export const EXPORT_HEAD = ['No. pelamar', 'Baris form', 'Gender', 'Sumber', 'Skor', 'Status', 'Tag']
+export const EXPORT_HEAD = ['No. pelamar', 'Nama', 'Panggilan', 'Baris form', 'Gender', 'Sumber', 'Skor', 'Status', 'Tag']
 export function exportCells(r: ExportRow): (string | number | null)[] {
-  return [r.f.id, formRow(r.f), r.f.gender ? GENDER[r.f.gender] : null, sourceName(r.f.source), r.f.skor, r.status, r.tags.join(', ') || null]
+  return [r.f.id, r.f.name ?? null, r.f.nick ?? null, formRow(r.f), r.f.gender ? GENDER[r.f.gender] : null, sourceName(r.f.source), r.f.skor, r.status, r.tags.join(', ') || null]
 }
 export function exportCsv(rows: ExportRow[]) {
   const q = (v: string | number | null) => (v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v))

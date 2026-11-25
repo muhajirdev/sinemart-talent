@@ -665,7 +665,14 @@ async function casting(env: Env, source: string | null, taste: string | null = n
   // lives in R2 per source: [{ id, row, gender, reason }]. No photos, phones or emails.
   const raw = source ? await env.IMAGES.get(`casting/unreadable/${source}.json`) : null;
   const unreadable = raw ? ((await raw.json()) as { id: number; row: number | null; gender: string | null; reason: string }[]) : [];
-  return { sources, faces: out, unreadable, tastes: list, taste, tags: await castingTags(env, source) };
+  // 2026-11-25 (Muajir: "why don't we have the applicant's name ... we should
+  // probably have it"): names per source in R2 casting/names/<source>.json as
+  // {id: [full name, nickname]}, from the form (never phones or emails).
+  // Casting page only: the picking page never shows names.
+  const nraw = source ? await env.IMAGES.get(`casting/names/${source}.json`) : null;
+  const names = nraw ? ((await nraw.json()) as Record<string, [string, string]>) : {};
+  const named = <T extends { id: number }>(x: T) => ({ ...x, name: names[x.id]?.[0] || null, nick: names[x.id]?.[1] || null });
+  return { sources, faces: out.map(named), unreadable: unreadable.map(named), tastes: list, taste, tags: await castingTags(env, source) };
 }
 
 // Tags per person ({id: [tag, ...]}) for one source (or all).
