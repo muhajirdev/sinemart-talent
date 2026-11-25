@@ -665,7 +665,29 @@ async function casting(env: Env, source: string | null, taste: string | null = n
   // lives in R2 per source: [{ id, row, gender, reason }]. No photos, phones or emails.
   const raw = source ? await env.IMAGES.get(`casting/unreadable/${source}.json`) : null;
   const unreadable = raw ? ((await raw.json()) as { id: number; row: number | null; gender: string | null; reason: string }[]) : [];
-  return { sources, faces: out, unreadable, tastes: list, taste };
+  return { sources, faces: out, unreadable, tastes: list, taste, tags: await castingTags(env, source) };
+}
+
+// Tags per person ({id: [tag, ...]}) for one source (or all).
+async function castingTags(env: Env, source: string | null) {
+  // Before the table exists (migrate.sql not run yet) the page still works, just without tags.
+  const results = await env.DB.prepare(
+    `SELECT t.applicant_id AS id, t.tag FROM casting_tags t JOIN applicants a ON a.id = t.applicant_id
+     WHERE ?1 IS NULL OR a.source = ?1 ORDER BY t.at`,
+  ).bind(source).all<{ id: number; tag: string }>().then((r) => r.results, () => []);
+  const out: Record<number, string[]> = {};
+  for (const r of results) (out[r.id] ??= []).push(r.tag);
+  return out;
+}
+
+// Add or remove one tag on one person. Tags are short plain words, as typed.
+async function setCastingTag(req: Request, env: Env, who: Rater) {
+  const b = (await req.json().catch(() => ({}))) as { id?: number; tag?: string; on?: boolean };
+  const id = Number(b.id), tag = String(b.tag ?? "").replace(/\s+/g, " ").trim().slice(0, 30);
+  if (!Number.isInteger(id) || !tag) return json({ error: "bad tag" }, 400);
+  if (b.on === false) await env.DB.prepare("DELETE FROM casting_tags WHERE applicant_id = ?1 AND tag = ?2").bind(id, tag).run();
+  else await env.DB.prepare("INSERT OR IGNORE INTO casting_tags (applicant_id, tag, by) VALUES (?1, ?2, ?3)").bind(id, tag, who.name).run();
+  return json({ ok: true });
 }
 
 export default {
@@ -684,6 +706,7 @@ export default {
     const only = url.searchParams.get("rater"); // results/map for one rater's taste
 
     if (url.pathname === "/api/casting") return json(await casting(env, url.searchParams.get("source") || null, url.searchParams.get("taste") || null));
+    if (url.pathname === "/api/casting/tag" && req.method === "POST") return setCastingTag(req, env, who);
     if (url.pathname === "/api/casting/taste" && req.method === "POST") return saveTaste(req, env, who);
     if (url.pathname === "/api/casting/taste/delete" && req.method === "POST") {
       const key = String(((await req.json().catch(() => ({}))) as { key?: string }).key ?? "").replace(/^foto:/, "");

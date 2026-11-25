@@ -16,7 +16,8 @@
     "@tanstack/react-router": "1.170.46",
     "@tanstack/react-start": "1.169.4",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "write-excel-file": "^4.1.1"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.26.0",

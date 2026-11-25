@@ -59,3 +59,14 @@ CREATE TABLE IF NOT EXISTS full_z (
 );
 ALTER TABLE model ADD COLUMN params_ranker TEXT;
 ALTER TABLE model ADD COLUMN heldout_ranker REAL;
+
+-- 2026-11-25 (Muajir: "there should be a way to mark or tag or something like
+-- that in the web"): casting admin tags on a person (Shortlist, Panggil
+-- casting, or any word). Casting page only: never shown to raters.
+CREATE TABLE IF NOT EXISTS casting_tags (
+  applicant_id INTEGER NOT NULL,
+  tag          TEXT NOT NULL,
+  by           TEXT NOT NULL,               -- who tagged (rater name)
+  at           TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (applicant_id, tag)
+);
