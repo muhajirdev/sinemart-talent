@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { GENDER, formRow, reasonName, sourceName, toCsv, unreadableCsv, type Casting, type Face, type Unreadable } from '#/lib/data'
+import { EXPORT_HEAD, GENDER, PRESET_TAGS, exportCells, exportCsv, formRow, reasonName, sourceName, toCsv, unreadableCsv, type Casting, type ExportRow, type Face, type Unreadable } from '#/lib/data'
 
 // 2026-11-24 (Muajir): "allow the filtering or threshold ... so the admin can
 // kinda choose to filter out at what threshold", "contrast effect, at a glance
@@ -8,12 +8,13 @@ import { GENDER, formRow, reasonName, sourceName, toCsv, unreadableCsv, type Cas
 // link opens the same source, gender and cutoff.
 // 2026-11-24 (Muajir: "so we can change and choose the right taste"): taste =
 // score everyone by one rater's own picks instead of the whole team's.
-type Search = { source?: string; taste?: string; g: 'm' | 'f' | 'all'; cut: number; tab: 'lolos' | 'tersaring' | 'semua' | 'tidak-terbaca' }
+type Search = { source?: string; taste?: string; tag?: string; g: 'm' | 'f' | 'all'; cut: number; tab: 'lolos' | 'tersaring' | 'semua' | 'tidak-terbaca' }
 
 export const Route = createFileRoute('/')({
   validateSearch: (s: Record<string, unknown>): Search => ({
     source: s.source == null || s.source === '' ? undefined : String(s.source), // '2026' arrives as a number
     taste: s.taste == null || s.taste === '' ? undefined : String(s.taste),
+    tag: s.tag == null || s.tag === '' ? undefined : String(s.tag),
     g: s.g === 'f' || s.g === 'all' ? s.g : 'm',
     cut: Math.max(0, Math.min(100, Number(s.cut) || 0)),
     tab: s.tab === 'tersaring' || s.tab === 'semua' || s.tab === 'tidak-terbaca' ? s.tab : 'lolos',
@@ -75,6 +76,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [build, setBuild] = useState(false)
   const [marks, setMarks] = useState<Map<number, 'suka' | 'tidak'>>(new Map())
   const [reload, setReload] = useState(0)
+  const [tags, setTags] = useState<Map<number, string[]>>(new Map())
   const [cut, setCut] = useState(search.cut) // follows the slider at once; the URL catches up
   useEffect(() => setCut(search.cut), [search.cut])
   useEffect(() => { const t = setTimeout(() => cut !== search.cut && set({ cut }), 250); return () => clearTimeout(t) }, [cut, search.cut, set])
@@ -93,6 +95,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
         // No source picked yet: open on the newest batch.
         if (!search.source && d.sources.length) return set({ source: d.sources[0].source })
         setData(d)
+        setTags(new Map(Object.entries(d.tags ?? {}).map(([k, v]) => [Number(k), v])))
       })
       .catch(() => live && setError('Gagal memuat. Coba muat ulang halaman.'))
       .finally(() => live && setLoading(false))
@@ -100,7 +103,20 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
   }, [search.source, search.taste, token, reload]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const img = (id: number, n?: number) => `/img/${id}${n == null ? '' : `/${n}`}?t=${encodeURIComponent(token)}`
-  const faces = useMemo(() => (data?.faces ?? []).filter((f) => search.g === 'all' || f.gender === search.g), [data, search.g])
+  const faces = useMemo(() => (data?.faces ?? []).filter((f) => (search.g === 'all' || f.gender === search.g)
+    && (!search.tag || (search.tag === '-' ? !tags.get(f.id)?.length : tags.get(f.id)?.includes(search.tag)))), [data, search.g, search.tag, tags])
+  // Every tag in use (with counts in this gender), presets first.
+  const tagCounts = useMemo(() => {
+    const c = new Map<string, number>(PRESET_TAGS.map((t) => [t, 0]))
+    for (const f of data?.faces ?? []) if (search.g === 'all' || f.gender === search.g) for (const t of tags.get(f.id) ?? []) c.set(t, (c.get(t) ?? 0) + 1)
+    return [...c]
+  }, [data, search.g, tags])
+  async function toggleTag(f: Face, tag: string) {
+    const on = !(tags.get(f.id) ?? []).includes(tag)
+    setTags((m) => { const n = new Map(m), cur = n.get(f.id) ?? []; n.set(f.id, on ? [...cur, tag] : cur.filter((t) => t !== tag)); return n })
+    const r = await post('/api/casting/tag', { id: f.id, tag, on })
+    if (!r.ok) setReload((x) => x + 1) // didn't save: show what the server has
+  }
   const scored = useMemo(() => faces.filter((f) => f.skor != null), [faces])
   const kept = useMemo(() => scored.filter((f) => f.skor! >= cut), [scored, cut])
   const dropped = useMemo(() => scored.filter((f) => f.skor! < cut), [scored, cut])
@@ -144,6 +160,17 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
     a.download = name
     a.click()
   }
+  const base = `${search.source ?? 'semua'}${g}${search.tag ? `-${search.tag.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : ''}`
+  const rows = (): ExportRow[] => faces.map((f) => ({ f, status: f.skor == null ? 'Belum ada skor' : f.skor >= cut ? 'Lolos' : 'Tersaring', tags: tags.get(f.id) ?? [] }))
+  async function downloadExcel() {
+    const { default: writeXlsxFile } = await import('write-excel-file/browser')
+    const bold = (v: string) => ({ value: v, fontWeight: 'bold' as const })
+    const people = [EXPORT_HEAD.map(bold), ...rows().map(exportCells)]
+    const sheets = [{ data: people, sheet: 'Pelamar', stickyRowsCount: 1, columns: [14, 11, 9, 26, 7, 14, 30].map((width) => ({ width })) }]
+    if (unread.length) sheets.push({ data: [['No. pelamar', 'Baris form', 'Gender', 'Alasan'].map(bold), ...unread.map((u) => [u.id, u.row, u.gender ? GENDER[u.gender] : null, reasonName(u.reason)])], sheet: 'Foto tidak terbaca', stickyRowsCount: 1, columns: [14, 11, 9, 28].map((width) => ({ width })) })
+    await writeXlsxFile(sheets as never).toFile(`pelamar-${base}-batas${cut}.xlsx`)
+  }
+  const downloadCsv = () => save(exportCsv(rows()), `pelamar-${base}-batas${cut}.csv`)
   const download = () => save(toCsv(kept), `lolos-${search.source ?? 'semua'}${g}${data?.taste ? `-taste-${data.taste.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : ''}-batas${cut}.csv`)
 
   const n = Math.min(10, Math.floor(scored.length / 2))
@@ -184,6 +211,12 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
                 <button key={g} aria-pressed={search.g === g} onClick={() => set({ g })}>{g === 'all' ? 'Semua' : GENDER[g]}</button>
               ))}
             </div>
+            <label className="lab">Tag</label>
+            <select value={search.tag ?? ''} onChange={(e) => set({ tag: e.target.value || undefined })}>
+              <option value="">Semua orang</option>
+              {tagCounts.map(([t, c]) => <option key={t} value={t}>{t} · {c}</option>)}
+              <option value="-">Belum ditandai</option>
+            </select>
           </section>
 
           {build && <Builder marks={marks} onSave={saveTaste} onCancel={() => { setBuild(false); setMarks(new Map()) }} />}
@@ -205,7 +238,12 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
               <div><b>{faces.length}</b><span>Total</span></div>
             </div>
             {faces.length > scored.length && <p className="muted small">{faces.length - scored.length} belum ada skor.</p>}
-            <button className="primary wide" disabled={!kept.length} onClick={download}>Unduh {kept.length} yang lolos (CSV)</button>
+            <button className="primary wide" disabled={!faces.length} onClick={downloadExcel}>Unduh Excel ({faces.length} orang + status)</button>
+            <div className="presets dl">
+              <span className="muted">Atau</span>
+              <button className="chip" disabled={!faces.length} onClick={downloadCsv}>CSV semua</button>
+              <button className="chip" disabled={!kept.length} onClick={download}>CSV {kept.length} yang lolos</button>
+            </div>
           </section>
           <p className="muted small">
             Skor 0–100 = seberapa besar peluang orang ini dipilih {data?.taste ? data.taste : 'tim'} dibanding pelamar rata-rata. Geser batas untuk menyaring yang jelas kurang cocok.
@@ -233,7 +271,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
               ) : (
               <div className={`grid${loading ? ' dim' : ''}`}>
                 {shown.map((f) => (
-                  <Tile key={f.id} f={f} img={img} out={f.skor == null || f.skor < cut} onOpen={build ? mark : setOpen} showOut={search.tab === 'semua' && !build} mark={build ? marks.get(f.id) : undefined} />
+                  <Tile key={f.id} f={f} tags={tags.get(f.id)} img={img} out={f.skor == null || f.skor < cut} onOpen={build ? mark : setOpen} showOut={search.tab === 'semua' && !build} mark={build ? marks.get(f.id) : undefined} />
                 ))}
                 {!shown.length && <p className="muted">Tidak ada pelamar di sini.</p>}
               </div>
@@ -243,7 +281,7 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
         </main>
       </div>
 
-      {open && <Viewer list={shown.includes(open) ? shown : scored} face={open} cut={cut} img={img} onClose={() => setOpen(null)} onMove={setOpen} />}
+      {open && <Viewer list={shown.includes(open) ? shown : scored} face={open} cut={cut} img={img} tags={tags.get(open.id) ?? []} allTags={tagCounts.map(([t]) => t)} onTag={(t) => toggleTag(open, t)} onClose={() => setOpen(null)} onMove={setOpen} />}
     </div>
   )
 }
@@ -311,11 +349,12 @@ function Strip({ title, tone, faces, img, onOpen }: { title: string; tone: 'good
   )
 }
 
-function Tile({ f, img, out, showOut, onOpen, mark }: { f: Face; img: ImgFn; out: boolean; showOut: boolean; onOpen: (f: Face) => void; mark?: 'suka' | 'tidak' }) {
+function Tile({ f, tags, img, out, showOut, onOpen, mark }: { f: Face; tags?: string[]; img: ImgFn; out: boolean; showOut: boolean; onOpen: (f: Face) => void; mark?: 'suka' | 'tidak' }) {
   return (
     <button className={`tile${showOut && out ? ' out' : ''}${mark ? ` mark-${mark}` : ''}`} onClick={() => onOpen(f)}>
       <img src={img(f.id)} alt="" loading="lazy" />
       {mark && <span className="badge">{mark === 'suka' ? 'Suka' : 'Tidak'}</span>}
+      {!mark && !!tags?.length && <span className="tagbadge" title={tags.join(', ')}>{tags[0]}{tags.length > 1 ? ` +${tags.length - 1}` : ''}</span>}
       <div className="meta">
         <b className={out ? 'bad' : 'good'}>{f.skor == null ? '–' : Math.round(f.skor)}</b>
         <span>#{f.id}</span>
@@ -324,13 +363,14 @@ function Tile({ f, img, out, showOut, onOpen, mark }: { f: Face; img: ImgFn; out
   )
 }
 
-function Viewer({ list, face, cut, img, onClose, onMove }: { list: Face[]; face: Face; cut: number; img: ImgFn; onClose: () => void; onMove: (f: Face) => void }) {
+function Viewer({ list, face, cut, img, tags, allTags, onTag, onClose, onMove }: { list: Face[]; face: Face; cut: number; img: ImgFn; tags: string[]; allTags: string[]; onTag: (t: string) => void; onClose: () => void; onMove: (f: Face) => void }) {
+  const [typed, setTyped] = useState('')
   const [n, setN] = useState(-1) // -1 = face crop, 0.. = whole photos
   useEffect(() => setN(-1), [face])
   const i = list.indexOf(face)
   const go = useCallback((d: number) => { const j = i + d; if (j >= 0 && j < list.length) onMove(list[j]) }, [i, list, onMove])
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); if (e.key === 'ArrowLeft') go(-1); if (e.key === 'ArrowRight') go(1) }
+    const k = (e: KeyboardEvent) => { if (e.target instanceof HTMLInputElement) return; if (e.key === 'Escape') onClose(); if (e.key === 'ArrowLeft') go(-1); if (e.key === 'ArrowRight') go(1) }
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
   }, [go, onClose])
@@ -354,6 +394,14 @@ function Viewer({ list, face, cut, img, onClose, onMove }: { list: Face[]; face:
             <div className="tag">{out ? 'Tersaring' : 'Lolos'}</div>
             <div className="muted small">#{face.id}{row ? ` · baris ${row} di form` : ''} · {face.gender ? GENDER[face.gender] : '–'} · {sourceName(face.source)}</div>
           </div>
+        </div>
+        <div className="tagbox">
+          {[...new Set([...allTags, ...tags])].map((t) => (
+            <button key={t} className="chip tagchip" aria-pressed={tags.includes(t)} onClick={() => onTag(t)}>{tags.includes(t) ? '✓ ' : '+ '}{t}</button>
+          ))}
+          <form onSubmit={(e) => { e.preventDefault(); const t = typed.trim(); if (t) { if (!tags.includes(t)) onTag(t); setTyped('') } }}>
+            <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Tag lain…" maxLength={30} />
+          </form>
         </div>
         <div className="nav">
           <button className="chip" disabled={i <= 0} onClick={() => go(-1)}>‹ Sebelumnya</button>
